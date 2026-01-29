@@ -1,5 +1,5 @@
 {
-  "name": "@moltbot/dingtalk",
+  "name": "@adongguo/moltbot-dingtalk",
   "version": "0.1.0",
   "type": "module",
   "description": "Moltbot DingTalk channel plugin",
@@ -38,7 +38,7 @@
       "order": 70
     },
     "install": {
-      "npmSpec": "@moltbot/dingtalk",
+      "npmSpec": "@adongguo/moltbot-dingtalk",
       "localPath": ".",
       "defaultChoice": "npm"
     }
