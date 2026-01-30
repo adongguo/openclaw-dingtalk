@@ -4,6 +4,234 @@ import type { DingTalkConfig } from "./types.js";
 import fs from "fs";
 import path from "path";
 
+// ============ Image Post-Processing (Local Path Upload) ============
+
+/**
+ * Regex to match markdown images with local file paths:
+ * - ![alt](file:///path/to/image.jpg)
+ * - ![alt](MEDIA:/var/folders/xxx.jpg)
+ * - ![alt](attachment:///path.jpg)
+ * - ![alt](/tmp/xxx.jpg)
+ * - ![alt](/var/folders/xxx.jpg)
+ * - ![alt](/Users/xxx/photo.jpg)
+ */
+const LOCAL_IMAGE_RE = /!\[([^\]]*)\]\(((?:file:\/\/\/|MEDIA:|attachment:\/\/\/)[^\s)]+|\/(?:tmp|var|private|Users)[^\s)]+)\)/g;
+
+/**
+ * Regex to match bare local image paths (not in markdown syntax):
+ * - `/var/folders/.../screenshot.png`
+ * - `/tmp/image.jpg`
+ * - `/Users/xxx/photo.png`
+ * Supports backtick wrapping: `path`
+ */
+const BARE_IMAGE_PATH_RE = /`?(\/(?:tmp|var|private|Users)\/[^\s`'",)]+\.(?:png|jpg|jpeg|gif|bmp|webp))`?/gi;
+
+interface Logger {
+  info?: (msg: string) => void;
+  warn?: (msg: string) => void;
+  error?: (msg: string) => void;
+}
+
+/**
+ * Build system prompt instructing LLM to use local file paths for images.
+ * This guides the LLM to output markdown with local paths instead of URLs.
+ */
+export function buildMediaSystemPrompt(): string {
+  return `## 钉钉图片显示规则
+
+你正在钉钉中与用户对话。显示图片时，直接使用本地文件路径，系统会自动上传处理。
+
+### 正确方式
+\`\`\`markdown
+![描述](file:///path/to/image.jpg)
+![描述](/tmp/screenshot.png)
+![描述](/Users/xxx/photo.jpg)
+\`\`\`
+
+### 禁止
+- 不要自己执行 curl 上传
+- 不要猜测或构造 URL
+- 不要使用 https://oapi.dingtalk.com/... 这类地址
+
+直接输出本地路径即可，系统会自动上传到钉钉。`;
+}
+
+/**
+ * Convert file:// MEDIA: attachment:// prefixes to absolute path.
+ */
+function toLocalPath(raw: string): string {
+  let filePath = raw;
+  if (filePath.startsWith("file://")) {
+    filePath = filePath.replace("file://", "");
+  } else if (filePath.startsWith("MEDIA:")) {
+    filePath = filePath.replace("MEDIA:", "");
+  } else if (filePath.startsWith("attachment://")) {
+    filePath = filePath.replace("attachment://", "");
+  }
+
+  // Decode URL-encoded paths (e.g. %E5%9B%BE -> 图)
+  try {
+    filePath = decodeURIComponent(filePath);
+  } catch {
+    // Keep original if decode fails
+  }
+  return filePath;
+}
+
+/**
+ * Get oapi access token for media upload.
+ * Uses dingtalk-stream's internal getAccessToken if available.
+ */
+export async function getOapiAccessToken(
+  config: DingTalkConfig,
+  client?: DWClient,
+): Promise<string | null> {
+  try {
+    // Try to get token from client first (dingtalk-stream SDK)
+    if (client) {
+      try {
+        const token = await (client as unknown as { getAccessToken: () => Promise<string> }).getAccessToken();
+        return token;
+      } catch {
+        // Fall through to manual token request
+      }
+    }
+
+    // Manual token request
+    const response = await fetch("https://oapi.dingtalk.com/gettoken", {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as { errcode?: number; access_token?: string };
+    if (data.errcode === 0 && data.access_token) {
+      return data.access_token;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Upload local file to DingTalk via oapi media upload endpoint.
+ * Returns media_id if successful.
+ */
+async function uploadToDingTalk(filePath: string, oapiToken: string, log?: Logger): Promise<string | null> {
+  try {
+    const absPath = toLocalPath(filePath);
+
+    if (!fs.existsSync(absPath)) {
+      log?.warn?.(`[DingTalk][Media] File not found: ${absPath}`);
+      return null;
+    }
+
+    const fileStream = fs.createReadStream(absPath);
+    const fileName = path.basename(absPath);
+
+    // Use FormData for multipart upload
+    const formData = new FormData();
+    const blob = new Blob([await fs.promises.readFile(absPath)]);
+    formData.append("media", blob, fileName);
+
+    log?.info?.(`[DingTalk][Media] Uploading image: ${absPath}`);
+
+    const response = await fetch(
+      `https://oapi.dingtalk.com/media/upload?access_token=${oapiToken}&type=image`,
+      {
+        method: "POST",
+        body: formData,
+      },
+    );
+
+    if (!response.ok) {
+      const text = await response.text();
+      log?.warn?.(`[DingTalk][Media] Upload failed: ${response.status} ${text}`);
+      return null;
+    }
+
+    const data = (await response.json()) as { media_id?: string };
+    const mediaId = data.media_id;
+
+    if (mediaId) {
+      log?.info?.(`[DingTalk][Media] Upload success: media_id=${mediaId}`);
+      return mediaId;
+    }
+
+    log?.warn?.(`[DingTalk][Media] Upload returned no media_id: ${JSON.stringify(data)}`);
+    return null;
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    log?.error?.(`[DingTalk][Media] Upload failed: ${errMsg}`);
+    return null;
+  }
+}
+
+/**
+ * Process content by scanning for local image paths and uploading them to DingTalk.
+ * Replaces local paths with media_id in the output.
+ *
+ * @param content - Content containing potential local image paths
+ * @param oapiToken - DingTalk oapi access token
+ * @param log - Optional logger
+ * @returns Content with local paths replaced by media_ids
+ */
+export async function processLocalImages(content: string, oapiToken: string | null, log?: Logger): Promise<string> {
+  if (!oapiToken) {
+    log?.warn?.(`[DingTalk][Media] No oapiToken, skipping image post-processing`);
+    return content;
+  }
+
+  let result = content;
+
+  // Step 1: Match markdown images ![alt](path)
+  const mdMatches = [...content.matchAll(LOCAL_IMAGE_RE)];
+  if (mdMatches.length > 0) {
+    log?.info?.(`[DingTalk][Media] Found ${mdMatches.length} markdown images, uploading...`);
+    for (const match of mdMatches) {
+      const [fullMatch, alt, rawPath] = match;
+      const mediaId = await uploadToDingTalk(rawPath, oapiToken, log);
+      if (mediaId) {
+        result = result.replace(fullMatch, `![${alt}](${mediaId})`);
+      }
+    }
+  }
+
+  // Step 2: Match bare local paths (e.g. /var/folders/.../xxx.png)
+  // Filter out paths already wrapped in markdown
+  const bareMatches = [...result.matchAll(BARE_IMAGE_PATH_RE)];
+  const newBareMatches = bareMatches.filter((m) => {
+    const idx = m.index!;
+    const before = result.slice(Math.max(0, idx - 10), idx);
+    return !before.includes("](");
+  });
+
+  if (newBareMatches.length > 0) {
+    log?.info?.(`[DingTalk][Media] Found ${newBareMatches.length} bare image paths, uploading...`);
+    // Replace from end to avoid index shifting
+    for (const match of newBareMatches.reverse()) {
+      const [fullMatch, rawPath] = match;
+      log?.info?.(`[DingTalk][Media] Bare image: "${fullMatch}" -> path="${rawPath}"`);
+      const mediaId = await uploadToDingTalk(rawPath, oapiToken, log);
+      if (mediaId) {
+        const replacement = `![](${mediaId})`;
+        result = result.slice(0, match.index!) + result.slice(match.index!).replace(fullMatch, replacement);
+        log?.info?.(`[DingTalk][Media] Replaced: ${replacement}`);
+      }
+    }
+  }
+
+  if (mdMatches.length === 0 && newBareMatches.length === 0) {
+    log?.info?.(`[DingTalk][Media] No local image paths detected`);
+  }
+
+  return result;
+}
+
 export type DownloadMediaResult = {
   buffer: Buffer;
   contentType?: string;
