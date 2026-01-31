@@ -11,7 +11,6 @@ import type { DingTalkConfig, DingTalkMessageContext, DingTalkMediaInfo, DingTal
 import { getDingTalkRuntime } from "./runtime.js";
 import {
   resolveDingTalkGroupConfig,
-  resolveDingTalkReplyPolicy,
   resolveDingTalkAllowlistMatch,
   isDingTalkGroupAllowed,
 } from "./policy.js";
@@ -239,30 +238,8 @@ export async function handleDingTalkMessage(params: {
       log(`dingtalk: sender ${ctx.senderId} not in group allowlist`);
       return;
     }
-
-    const { requireMention } = resolveDingTalkReplyPolicy({
-      isDirectMessage: false,
-      globalConfig: dingtalkCfg,
-      groupConfig,
-    });
-
-    if (requireMention && !ctx.mentionedBot) {
-      log(`dingtalk: message in group ${ctx.conversationId} did not mention bot, recording to history`);
-      if (chatHistories) {
-        recordPendingHistoryEntryIfEnabled({
-          historyMap: chatHistories,
-          historyKey: ctx.conversationId,
-          limit: historyLimit,
-          entry: {
-            sender: ctx.senderNick || ctx.senderId,
-            body: ctx.content,
-            timestamp: Date.now(),
-            messageId: ctx.messageId,
-          },
-        });
-      }
-      return;
-    }
+    // Note: Group messages require @mention to reach the bot - this is a DingTalk platform limitation.
+    // The bot only receives messages where it was mentioned, so no additional check is needed here.
   } else {
     const dmPolicy = dingtalkCfg?.dmPolicy ?? "pairing";
     const allowFrom = dingtalkCfg?.allowFrom ?? [];

@@ -74,7 +74,6 @@ No test suite exists yet.
 | `connectionMode` | `stream` (default) or `webhook` |
 | `dmPolicy` | `pairing` / `open` / `allowlist` |
 | `groupPolicy` | `open` / `allowlist` / `disabled` |
-| `requireMention` | Require @mention in group chats (default: true) |
 | `renderMode` | `auto` / `raw` / `card` for message rendering |
 | `aiCardMode` | `enabled` / `disabled` for AI Card streaming |
 | `sessionTimeout` | Session timeout in ms (default: 30 minutes) |
@@ -104,6 +103,7 @@ The plugin is registered in `index.ts` via `api.registerChannel()`.
 - **No typing indicator**: No native API for this
 - **sessionWebhook expiration**: Reply URLs expire (check `sessionWebhookExpiredTime`)
 - **Rate limits**: Avoid rapid message sending to prevent throttling
+- **Group @mention required**: In group chats, messages must @mention the bot to be received - this is a DingTalk platform limitation and cannot be changed via configuration
 
 ## Troubleshooting
 
