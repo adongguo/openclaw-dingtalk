@@ -76,17 +76,3 @@ export function isDingTalkGroupAllowed(params: {
   return resolveDingTalkAllowlistMatch(params).allowed;
 }
 
-export function resolveDingTalkReplyPolicy(params: {
-  isDirectMessage: boolean;
-  globalConfig?: DingTalkConfig;
-  groupConfig?: DingTalkGroupConfig;
-}): { requireMention: boolean } {
-  if (params.isDirectMessage) {
-    return { requireMention: false };
-  }
-
-  const requireMention =
-    params.groupConfig?.requireMention ?? params.globalConfig?.requireMention ?? true;
-
-  return { requireMention };
-}
