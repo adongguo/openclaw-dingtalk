@@ -60,8 +60,6 @@ channels:
     dmPolicy: "pairing"
     # Group policy: "open" | "allowlist" | "disabled"
     groupPolicy: "allowlist"
-    # Require @mention in groups
-    requireMention: true
     # Max media size in MB (default: 30)
     mediaMaxMb: 30
     # Render mode for bot replies: "auto" | "raw" | "card"
@@ -101,6 +99,7 @@ channels:
 - **No message editing**: DingTalk doesn't support editing messages via sessionWebhook
 - **No reactions**: Bot API doesn't support message reactions
 - **sessionWebhook expiration**: Reply URLs are temporary and expire
+- **Group @mention required**: Group messages must @mention the bot - this is a DingTalk platform limitation and cannot be changed via plugin configuration
 
 ### FAQ
 
@@ -188,8 +187,6 @@ channels:
     dmPolicy: "pairing"
     # 群聊策略: "open" | "allowlist" | "disabled"
     groupPolicy: "allowlist"
-    # 群聊是否需要 @机器人
-    requireMention: true
     # 媒体文件最大大小 (MB, 默认 30)
     mediaMaxMb: 30
     # 回复渲染模式: "auto" | "raw" | "card"
@@ -229,6 +226,7 @@ channels:
 - **不支持消息编辑**：钉钉不支持通过 sessionWebhook 编辑消息
 - **不支持表情回复**：机器人 API 不支持消息表情回复
 - **sessionWebhook 过期**：回复 URL 是临时的，会过期
+- **群聊必须 @机器人**：群聊消息必须 @机器人才会回复，这是钉钉平台限制，无法通过插件配置更改
 
 ### 常见问题
 
