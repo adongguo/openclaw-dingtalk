@@ -66,6 +66,13 @@ channels:
     mediaMaxMb: 30
     # Render mode for bot replies: "auto" | "raw" | "card"
     renderMode: "auto"
+    # AI Card streaming mode: "enabled" (default) | "disabled"
+    aiCardMode: "enabled"
+    # Session timeout in ms (default: 30 minutes)
+    sessionTimeout: 1800000
+    # Gateway integration (optional)
+    gatewayToken: "your_gateway_token"
+    gatewayPort: 18789
 ```
 
 #### Render Mode
@@ -85,6 +92,9 @@ channels:
 - Pairing flow for DM approval
 - User and group directory lookup (config-based)
 - ActionCard render mode for markdown rendering
+- AI Card streaming for real-time typing effect
+- Session timeout management with `/new` command
+- Gateway SSE integration for streaming responses
 
 ### Limitations
 
@@ -184,6 +194,13 @@ channels:
     mediaMaxMb: 30
     # 回复渲染模式: "auto" | "raw" | "card"
     renderMode: "auto"
+    # AI Card 流式模式: "enabled" (默认) | "disabled"
+    aiCardMode: "enabled"
+    # 会话超时时间 (毫秒, 默认 30 分钟)
+    sessionTimeout: 1800000
+    # Gateway 集成 (可选)
+    gatewayToken: "your_gateway_token"
+    gatewayPort: 18789
 ```
 
 #### 渲染模式
@@ -203,6 +220,9 @@ channels:
 - 私聊配对审批流程
 - 用户和群组目录查询（基于配置）
 - ActionCard 渲染模式支持 Markdown 渲染
+- AI Card 流式响应（打字机效果）
+- 会话超时管理（支持 `/new` 命令开启新会话）
+- Gateway SSE 流式集成
 
 ### 限制
 
