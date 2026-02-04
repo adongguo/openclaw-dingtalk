@@ -21,6 +21,13 @@ export {
   buildMediaSystemPrompt,
   processLocalImages,
   getOapiAccessToken,
+  // File marker processing
+  extractFileMarkers,
+  processFileMarkers,
+  uploadAndSendFile,
+  type FileMarkerInfo,
+  type ExtractedFileMarker,
+  type ProcessedFileResult,
 } from "./src/media.js";
 export { probeDingTalk } from "./src/probe.js";
 export {
@@ -30,6 +37,20 @@ export {
   DingTalkEmoji,
 } from "./src/reactions.js";
 export { dingtalkPlugin } from "./src/channel.js";
+
+// OpenAPI-based sending (proactive messaging)
+export {
+  sendViaOpenAPI,
+  sendTextViaOpenAPI,
+  sendMarkdownViaOpenAPI,
+  sendImageViaOpenAPI,
+  sendFileViaOpenAPI,
+  sendActionCardViaOpenAPI,
+  type OpenAPISendTarget,
+  type OpenAPIMsgKey,
+  type OpenAPISendRequest,
+  type OpenAPISendResult,
+} from "./src/openapi-send.js";
 
 // AI Card streaming
 export {

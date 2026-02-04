@@ -4,6 +4,273 @@ import type { DingTalkConfig } from "./types.js";
 import fs from "fs";
 import path from "path";
 
+// ============ File Marker Processing ============
+
+/**
+ * Regex to match file markers: [DINGTALK_FILE]{...}[/DINGTALK_FILE]
+ */
+const FILE_MARKER_RE = /\[DINGTALK_FILE\]\s*(\{[^}]+\})\s*\[\/DINGTALK_FILE\]/g;
+
+/** Maximum file size for upload (20MB) */
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+
+export interface FileMarkerInfo {
+  path: string;
+  name?: string;
+}
+
+export interface ExtractedFileMarker {
+  fullMatch: string;
+  info: FileMarkerInfo;
+}
+
+export interface ProcessedFileResult {
+  content: string;
+  files: ExtractedFileMarker[];
+}
+
+/**
+ * Extract file markers from content.
+ * Returns the content with markers removed and a list of extracted file info.
+ */
+export function extractFileMarkers(content: string, log?: Logger): ProcessedFileResult {
+  const files: ExtractedFileMarker[] = [];
+  const matches = [...content.matchAll(FILE_MARKER_RE)];
+
+  if (matches.length === 0) {
+    return { content, files };
+  }
+
+  log?.info?.(`[DingTalk][Media] Found ${matches.length} file markers`);
+
+  for (const match of matches) {
+    const [fullMatch, jsonStr] = match;
+    try {
+      const info = JSON.parse(jsonStr) as FileMarkerInfo;
+      if (info.path) {
+        files.push({ fullMatch, info });
+        log?.info?.(`[DingTalk][Media] Extracted file: ${info.path}, name=${info.name || "(auto)"}`);
+      }
+    } catch (err) {
+      log?.warn?.(`[DingTalk][Media] Failed to parse file marker JSON: ${jsonStr}`);
+    }
+  }
+
+  // Remove file markers from content
+  let cleanedContent = content;
+  for (const file of files) {
+    cleanedContent = cleanedContent.replace(file.fullMatch, "");
+  }
+
+  // Clean up extra whitespace left by removed markers
+  cleanedContent = cleanedContent.replace(/\n{3,}/g, "\n\n").trim();
+
+  return { content: cleanedContent, files };
+}
+
+/**
+ * Upload a file to DingTalk via OpenAPI and send as file message.
+ * Uses the robot message API for file sending.
+ */
+export async function uploadAndSendFile(
+  filePath: string,
+  fileName: string | undefined,
+  config: { appKey: string; appSecret: string; robotCode?: string },
+  conversationInfo: {
+    conversationType: "1" | "2";
+    conversationId: string;
+    senderId?: string;
+  },
+  log?: Logger,
+): Promise<boolean> {
+  try {
+    const absPath = toLocalPath(filePath);
+
+    if (!fs.existsSync(absPath)) {
+      log?.warn?.(`[DingTalk][Media] File not found: ${absPath}`);
+      return false;
+    }
+
+    const stats = fs.statSync(absPath);
+    if (stats.size > MAX_FILE_SIZE) {
+      log?.warn?.(`[DingTalk][Media] File too large (${Math.round(stats.size / 1024 / 1024)}MB > 20MB): ${absPath}`);
+      return false;
+    }
+
+    const finalFileName = fileName || path.basename(absPath);
+    const fileExt = path.extname(finalFileName).slice(1).toLowerCase() || "file";
+
+    log?.info?.(`[DingTalk][Media] Uploading file: ${absPath} as "${finalFileName}"`);
+
+    // Step 1: Get oapi access token for upload
+    const oapiTokenResp = await fetch(
+      `https://oapi.dingtalk.com/gettoken?appkey=${encodeURIComponent(config.appKey)}&appsecret=${encodeURIComponent(config.appSecret)}`,
+    );
+
+    if (!oapiTokenResp.ok) {
+      log?.error?.(`[DingTalk][Media] Failed to get oapi token: ${oapiTokenResp.status}`);
+      return false;
+    }
+
+    const oapiTokenData = (await oapiTokenResp.json()) as { errcode?: number; access_token?: string };
+    if (oapiTokenData.errcode !== 0 || !oapiTokenData.access_token) {
+      log?.error?.(`[DingTalk][Media] oapi token error: errcode=${oapiTokenData.errcode}`);
+      return false;
+    }
+    const oapiToken = oapiTokenData.access_token;
+
+    // Step 2: Upload file via oapi to get media_id
+    const formData = new FormData();
+    const fileBuffer = await fs.promises.readFile(absPath);
+    const blob = new Blob([fileBuffer]);
+    formData.append("media", blob, finalFileName);
+
+    const uploadResp = await fetch(
+      `https://oapi.dingtalk.com/media/upload?access_token=${oapiToken}&type=file`,
+      { method: "POST", body: formData },
+    );
+
+    if (!uploadResp.ok) {
+      const text = await uploadResp.text();
+      log?.error?.(`[DingTalk][Media] File upload failed: ${uploadResp.status} ${text}`);
+      return false;
+    }
+
+    const uploadData = (await uploadResp.json()) as { errcode?: number; media_id?: string };
+    const mediaId = uploadData.media_id;
+
+    if (!mediaId) {
+      log?.error?.(`[DingTalk][Media] No media_id returned from upload: errcode=${uploadData.errcode}`);
+      return false;
+    }
+
+    log?.info?.(`[DingTalk][Media] File uploaded, mediaId=${mediaId}`);
+
+    // Step 2.5: Get OAuth2 access token for sending via robot API
+    const tokenResp = await fetch("https://api.dingtalk.com/v1.0/oauth2/accessToken", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        appKey: config.appKey,
+        appSecret: config.appSecret,
+      }),
+    });
+
+    if (!tokenResp.ok) {
+      log?.error?.(`[DingTalk][Media] Failed to get access token: ${tokenResp.status}`);
+      return false;
+    }
+
+    const tokenData = (await tokenResp.json()) as { accessToken: string };
+    const accessToken = tokenData.accessToken;
+
+    // Step 3: Send file message via OpenAPI
+    const isGroup = conversationInfo.conversationType === "2";
+
+    if (isGroup) {
+      // Send to group
+      const sendResp = await fetch("https://api.dingtalk.com/v1.0/robot/groupMessages/send", {
+        method: "POST",
+        headers: {
+          "x-acs-dingtalk-access-token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          robotCode: config.robotCode || config.appKey,
+          openConversationId: conversationInfo.conversationId,
+          msgKey: "sampleFile",
+          msgParam: JSON.stringify({
+            mediaId,
+            fileName: finalFileName,
+            fileType: fileExt,
+          }),
+        }),
+      });
+
+      if (!sendResp.ok) {
+        const text = await sendResp.text();
+        log?.error?.(`[DingTalk][Media] Group file send failed: ${sendResp.status} ${text}`);
+        return false;
+      }
+
+      log?.info?.(`[DingTalk][Media] File sent to group successfully`);
+    } else {
+      // Send to user (1:1 chat)
+      const sendResp = await fetch("https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend", {
+        method: "POST",
+        headers: {
+          "x-acs-dingtalk-access-token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          robotCode: config.robotCode || config.appKey,
+          userIds: [conversationInfo.senderId],
+          msgKey: "sampleFile",
+          msgParam: JSON.stringify({
+            mediaId,
+            fileName: finalFileName,
+            fileType: fileExt,
+          }),
+        }),
+      });
+
+      if (!sendResp.ok) {
+        const text = await sendResp.text();
+        log?.error?.(`[DingTalk][Media] DM file send failed: ${sendResp.status} ${text}`);
+        return false;
+      }
+
+      log?.info?.(`[DingTalk][Media] File sent to user successfully`);
+    }
+
+    return true;
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    log?.error?.(`[DingTalk][Media] File processing failed: ${errMsg}`);
+    return false;
+  }
+}
+
+/**
+ * Process file markers in content: extract, upload, and send files.
+ * Returns the cleaned content (with markers removed).
+ */
+export async function processFileMarkers(
+  content: string,
+  config: { appKey: string; appSecret: string; robotCode?: string },
+  conversationInfo: {
+    conversationType: "1" | "2";
+    conversationId: string;
+    senderId?: string;
+  },
+  log?: Logger,
+): Promise<string> {
+  const { content: cleanedContent, files } = extractFileMarkers(content, log);
+
+  if (files.length === 0) {
+    return content;
+  }
+
+  log?.info?.(`[DingTalk][Media] Processing ${files.length} file(s)...`);
+
+  // Upload and send each file
+  for (const file of files) {
+    const success = await uploadAndSendFile(
+      file.info.path,
+      file.info.name,
+      config,
+      conversationInfo,
+      log,
+    );
+
+    if (!success) {
+      log?.warn?.(`[DingTalk][Media] Failed to send file: ${file.info.path}`);
+    }
+  }
+
+  return cleanedContent;
+}
+
 // ============ Image Post-Processing (Local Path Upload) ============
 
 /**
@@ -33,27 +300,38 @@ interface Logger {
 }
 
 /**
- * Build system prompt instructing LLM to use local file paths for images.
+ * Build system prompt instructing LLM to use local file paths for images and file markers.
  * This guides the LLM to output markdown with local paths instead of URLs.
  */
 export function buildMediaSystemPrompt(): string {
-  return `## 钉钉图片显示规则
+  return `## 钉钉媒体显示规则
 
-你正在钉钉中与用户对话。显示图片时，直接使用本地文件路径，系统会自动上传处理。
+你正在钉钉中与用户对话。
 
-### 正确方式
+### 图片显示
+直接使用本地文件路径，系统会自动上传处理：
 \`\`\`markdown
 ![描述](file:///path/to/image.jpg)
 ![描述](/tmp/screenshot.png)
-![描述](/Users/xxx/photo.jpg)
 \`\`\`
+
+### 文件发送
+使用特殊标记发送文件，系统会自动上传并发送文件卡片：
+\`\`\`
+[DINGTALK_FILE]{"path": "/path/to/file.pdf", "name": "报告.pdf"}[/DINGTALK_FILE]
+[DINGTALK_FILE]{"path": "/tmp/data.xlsx"}[/DINGTALK_FILE]
+\`\`\`
+
+文件标记参数：
+- \`path\` (必填): 本地文件路径
+- \`name\` (可选): 显示的文件名，默认使用原文件名
 
 ### 禁止
 - 不要自己执行 curl 上传
 - 不要猜测或构造 URL
 - 不要使用 https://oapi.dingtalk.com/... 这类地址
 
-直接输出本地路径即可，系统会自动上传到钉钉。`;
+直接输出本地路径或文件标记即可，系统会自动处理上传。`;
 }
 
 /**
@@ -334,38 +612,43 @@ export async function uploadMediaDingTalk(params: {
   }
 
   try {
-    const accessToken = await client.getAccessToken();
+    // Get oapi token for media upload
+    const oapiTokenResp = await fetch(
+      `https://oapi.dingtalk.com/gettoken?appkey=${encodeURIComponent(dingtalkCfg.appKey!)}&appsecret=${encodeURIComponent(dingtalkCfg.appSecret!)}`,
+    );
 
-    // DingTalk media upload uses multipart form data
-    // https://api.dingtalk.com/v1.0/robot/messageFiles/upload
+    if (!oapiTokenResp.ok) {
+      throw new Error(`Failed to get oapi token: ${oapiTokenResp.status}`);
+    }
+
+    const oapiTokenData = (await oapiTokenResp.json()) as { errcode?: number; access_token?: string };
+    if (oapiTokenData.errcode !== 0 || !oapiTokenData.access_token) {
+      throw new Error(`oapi token error: errcode=${oapiTokenData.errcode}`);
+    }
+
+    // Upload via oapi media endpoint
     const formData = new FormData();
-    // Convert Buffer to ArrayBuffer for Blob compatibility
     const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
     const blob = new Blob([arrayBuffer], { type: "application/octet-stream" });
-    formData.append("file", blob, fileName);
-    formData.append("type", mediaType);
-    formData.append("robotCode", dingtalkCfg.robotCode || "");
+    formData.append("media", blob, fileName);
 
-    const response = await fetch("https://api.dingtalk.com/v1.0/robot/messageFiles/upload", {
-      method: "POST",
-      headers: {
-        "x-acs-dingtalk-access-token": accessToken,
-      },
-      body: formData,
-    });
+    const response = await fetch(
+      `https://oapi.dingtalk.com/media/upload?access_token=${oapiTokenData.access_token}&type=${mediaType}`,
+      { method: "POST", body: formData },
+    );
 
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`DingTalk media upload failed: ${response.status} ${text}`);
     }
 
-    const result = await response.json() as { mediaId?: string };
+    const result = await response.json() as { errcode?: number; media_id?: string };
 
-    if (!result.mediaId) {
-      throw new Error("DingTalk media upload failed: no mediaId returned");
+    if (!result.media_id) {
+      throw new Error(`DingTalk media upload failed: no media_id returned, errcode=${result.errcode}`);
     }
 
-    return { mediaId: result.mediaId };
+    return { mediaId: result.media_id };
   } catch (err) {
     console.error(`DingTalk media upload error: ${String(err)}`);
     return null;

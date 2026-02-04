@@ -54,7 +54,7 @@ export type DingTalkMediaInfo = {
 // DingTalk incoming message structure (from Stream callback)
 export type DingTalkIncomingMessage = {
   msgId: string;
-  msgtype: "text" | "image" | "voice" | "file" | "link" | "markdown" | "richText" | "picture";
+  msgtype: "text" | "image" | "voice" | "file" | "link" | "markdown" | "richText" | "picture" | "video";
   text?: { content: string };
   content?: string; // For richText
   conversationId: string;
@@ -76,6 +76,8 @@ export type DingTalkIncomingMessage = {
   isInAtList?: boolean;
   // For media messages
   downloadCode?: string;
+  // Speech-to-text recognition result for voice messages
+  recognition?: string;
 };
 
 // DingTalk outbound message types

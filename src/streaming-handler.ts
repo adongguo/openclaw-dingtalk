@@ -10,7 +10,7 @@ import type { DingTalkConfig, DingTalkIncomingMessage } from "./types.js";
 import { createAICard, streamAICard, finishAICard, failAICard } from "./ai-card.js";
 import { isNewSessionCommand, getSessionKey, DEFAULT_SESSION_TIMEOUT } from "./session.js";
 import { streamFromGateway } from "./gateway-stream.js";
-import { buildMediaSystemPrompt, processLocalImages, getOapiAccessToken } from "./media.js";
+import { buildMediaSystemPrompt, processLocalImages, processFileMarkers, getOapiAccessToken } from "./media.js";
 import { sendDingTalkMessage, sendDingTalkTextMessage } from "./send.js";
 
 // ============ Types ============
@@ -225,6 +225,18 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
         );
         accumulated = await processLocalImages(accumulated, oapiToken, log);
 
+        // Post-process: extract and send file markers
+        accumulated = await processFileMarkers(
+          accumulated,
+          { appKey: config.appKey, appSecret: config.appSecret, robotCode: config.robotCode },
+          {
+            conversationType: data.conversationType,
+            conversationId: data.conversationId,
+            senderId: senderId,
+          },
+          log,
+        );
+
         // Finalize AI Card
         await finishAICard(card, accumulated, log);
         log?.info?.(`[DingTalk][Streaming] AI Card finished, ${accumulated.length} chars`);
@@ -266,6 +278,18 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
 
     // Post-process images
     fullResponse = await processLocalImages(fullResponse, oapiToken, log);
+
+    // Post-process: extract and send file markers
+    fullResponse = await processFileMarkers(
+      fullResponse,
+      { appKey: config.appKey, appSecret: config.appSecret, robotCode: config.robotCode },
+      {
+        conversationType: data.conversationType,
+        conversationId: data.conversationId,
+        senderId: senderId,
+      },
+      log,
+    );
 
     await sendDingTalkMessage({
       sessionWebhook,

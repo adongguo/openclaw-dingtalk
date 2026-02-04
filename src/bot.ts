@@ -30,8 +30,8 @@ function parseMessageContent(message: DingTalkIncomingMessage): string {
       return message.content;
     }
   }
-  // For other message types, return a placeholder
-  return `[${message.msgtype}]`;
+  // For other message types, return descriptive text
+  return describeMediaMessage(message);
 }
 
 function extractRichTextContent(richText: unknown): string {
@@ -47,7 +47,9 @@ function extractRichTextContent(richText: unknown): string {
       return;
     }
     const obj = node as Record<string, unknown>;
-    if (obj.text && typeof obj.text === "string") {
+    if (obj.type === "picture") {
+      parts.push("[图片]");
+    } else if (obj.text && typeof obj.text === "string") {
       parts.push(obj.text);
     }
     if (obj.content) {
@@ -376,5 +378,23 @@ export async function handleDingTalkMessage(params: {
     log(`dingtalk: dispatch complete (queuedFinal=${queuedFinal}, replies=${counts.final})`);
   } catch (err) {
     error(`dingtalk: failed to dispatch message: ${String(err)}`);
+  }
+}
+
+function describeMediaMessage(message: DingTalkIncomingMessage): string {
+  switch (message.msgtype) {
+    case "image":
+    case "picture":
+      return "用户发送了一张图片";
+    case "file":
+      return "用户发送了一个文件";
+    case "voice":
+      return message.recognition
+        ? `用户发送了一条语音消息，语音识别内容: ${message.recognition}`
+        : "用户发送了一条语音消息";
+    case "video":
+      return "用户发送了一个视频";
+    default:
+      return `[${message.msgtype}]`;
   }
 }

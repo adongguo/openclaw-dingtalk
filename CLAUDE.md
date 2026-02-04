@@ -35,7 +35,7 @@ No test suite exists yet.
 
 **Outbound:**
 - `send.ts` - Text, markdown, ActionCard messages via sessionWebhook
-- `media.ts` - Upload/download images and files via OpenAPI
+- `media.ts` - Upload/download images and files via OpenAPI, file marker processing
 - `outbound.ts` - `ChannelOutboundAdapter` implementation
 - `reply-dispatcher.ts` - Reply handling with render mode (raw/card/auto)
 
@@ -96,8 +96,37 @@ This plugin implements the OpenClaw channel plugin interface:
 
 The plugin is registered in `index.ts` via `api.registerChannel()`.
 
+### Media Processing Features
+
+**Image Auto-Upload:**
+LLM outputs containing local image paths are automatically uploaded to DingTalk:
+```markdown
+![描述](file:///path/to/image.jpg)
+![描述](/tmp/screenshot.png)
+```
+
+**File Marker Processing:**
+LLM can use special markers to send files as separate file cards:
+```
+[DINGTALK_FILE]{"path": "/path/to/file.pdf", "name": "报告.pdf"}[/DINGTALK_FILE]
+```
+
+Processing flow:
+1. `extractFileMarkers()` parses markers from content
+2. `uploadAndSendFile()` uploads file via `/v1.0/robot/messageFiles/upload`
+3. File is sent as `sampleFile` message via OpenAPI
+4. Markers are removed from the final text content
+
+**Key Functions (media.ts):**
+- `buildMediaSystemPrompt()` - Instructs LLM on image/file output format
+- `processLocalImages()` - Uploads local images, replaces paths with media_id
+- `processFileMarkers()` - Extracts file markers, uploads and sends files
+- `extractFileMarkers()` - Parses `[DINGTALK_FILE]...[/DINGTALK_FILE]` markers
+- `uploadAndSendFile()` - Uploads file and sends via OpenAPI
+
 ### DingTalk API Limitations
 
+- **Group chat requires @mention**: DingTalk only sends messages to the bot when it's @mentioned in group chats. This is a platform-level behavior that cannot be changed.
 - **No message editing**: Cannot edit sent messages via sessionWebhook
 - **No reactions**: Bot API doesn't support message reactions
 - **No typing indicator**: No native API for this

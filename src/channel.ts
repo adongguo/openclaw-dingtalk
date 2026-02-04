@@ -34,9 +34,21 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
     idLabel: "dingtalkUserId",
     normalizeAllowEntry: (entry) => entry.replace(/^(dingtalk|user|staff):/i, ""),
     notifyApproval: async ({ cfg, id }) => {
-      // Note: DingTalk pairing approval requires sessionWebhook which is only available
-      // during active message handling. This is a limitation of the DingTalk API.
-      console.log(`[dingtalk] Pairing approved for user ${id}. Cannot send notification without sessionWebhook.`);
+      const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+      if (!dingtalkCfg?.appKey || !dingtalkCfg?.appSecret) {
+        return;
+      }
+      try {
+        const { sendTextViaOpenAPI } = await import("./openapi-send.js");
+        const staffId = String(id).replace(/^(dingtalk|user|staff):/i, "");
+        await sendTextViaOpenAPI({
+          config: dingtalkCfg,
+          target: { kind: "user", id: staffId },
+          content: "Your pairing request has been approved. You can now send messages to the bot.",
+        });
+      } catch {
+        // Proactive send not available; silently ignore
+      }
     },
   },
   capabilities: {

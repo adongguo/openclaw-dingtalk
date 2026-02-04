@@ -60,6 +60,8 @@ channels:
     dmPolicy: "pairing"
     # Group policy: "open" | "allowlist" | "disabled"
     groupPolicy: "allowlist"
+    # Require @mention in groups
+    requireMention: true
     # Max media size in MB (default: 30)
     mediaMaxMb: 30
     # Render mode for bot replies: "auto" | "raw" | "card"
@@ -187,6 +189,8 @@ channels:
     dmPolicy: "pairing"
     # 群聊策略: "open" | "allowlist" | "disabled"
     groupPolicy: "allowlist"
+    # 群聊是否需要 @机器人
+    requireMention: true
     # 媒体文件最大大小 (MB, 默认 30)
     mediaMaxMb: 30
     # 回复渲染模式: "auto" | "raw" | "card"

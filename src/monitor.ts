@@ -87,6 +87,12 @@ async function monitorStream(params: {
           const messageData = JSON.parse(res.data) as DingTalkIncomingMessage;
           log(`dingtalk: received message from ${messageData.senderNick}: ${messageData.text?.content || messageData.msgtype}`);
 
+          // Debug: log raw payload for media messages to diagnose downloadCode availability
+          const mediaTypes = ["image", "picture", "file", "voice", "video"];
+          if (mediaTypes.includes(messageData.msgtype)) {
+            log(`dingtalk: raw media message payload: ${res.data}`);
+          }
+
           await handleDingTalkMessage({
             cfg,
             message: messageData,
