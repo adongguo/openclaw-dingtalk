@@ -54,7 +54,6 @@ const AICardModeSchema = z.enum(["enabled", "disabled"]).optional();
 
 export const DingTalkGroupSchema = z
   .object({
-    requireMention: z.boolean().optional(),
     tools: ToolPolicySchema,
     skills: z.array(z.string()).optional(),
     enabled: z.boolean().optional(),
@@ -79,7 +78,6 @@ export const DingTalkConfigSchema = z
     allowFrom: z.array(z.union([z.string(), z.number()])).optional(),
     groupPolicy: GroupPolicySchema.optional().default("allowlist"),
     groupAllowFrom: z.array(z.union([z.string(), z.number()])).optional(),
-    requireMention: z.boolean().optional().default(true),
     groups: z.record(z.string(), DingTalkGroupSchema.optional()).optional(),
     historyLimit: z.number().int().min(0).optional(),
     dmHistoryLimit: z.number().int().min(0).optional(),

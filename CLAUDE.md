@@ -132,7 +132,7 @@ Processing flow:
 - **No typing indicator**: No native API for this
 - **sessionWebhook expiration**: Reply URLs expire (check `sessionWebhookExpiredTime`)
 - **Rate limits**: Avoid rapid message sending to prevent throttling
-- **Group @mention required**: Group messages must @mention the bot - this is a DingTalk platform limitation and cannot be changed via plugin configuration
+- **Group @mention required**: In group chats, messages must @mention the bot to be received - this is a DingTalk platform limitation and cannot be changed via configuration
 
 ## Troubleshooting
 
