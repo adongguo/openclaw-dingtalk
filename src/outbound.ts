@@ -141,6 +141,46 @@ async function getOapiToken(config: DingTalkConfig): Promise<string> {
   return data.access_token;
 }
 
+const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]);
+
+async function sendMediaViaOpenAPIWithUpload(
+  config: DingTalkConfig,
+  target: OpenAPISendTarget,
+  mediaUrl: string,
+): Promise<string> {
+  if (isLocalPath(mediaUrl)) {
+    const fileName = path.basename(mediaUrl);
+    const ext = path.extname(fileName).toLowerCase();
+
+    if (IMAGE_EXTENSIONS.has(ext)) {
+      // Local image: upload as image type, then send via sampleImageMsg.
+      // DingTalk's sampleImageMsg accepts media_id directly as photoURL.
+      const mediaId = await uploadFileToMediaId(config, mediaUrl, "image");
+      try {
+        const result = await sendImageViaOpenAPI({ config, target, photoURL: mediaId });
+        return result.processQueryKey;
+      } catch (err) {
+        // Fall back to sending as file card (reuse already-uploaded mediaId)
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(`[dingtalk] sampleImageMsg failed, falling back to file card: ${errMsg}`);
+        const fileType = ext.slice(1) || "jpg";
+        const result = await sendFileViaOpenAPI({ config, target, mediaId, fileName, fileType });
+        return result.processQueryKey;
+      }
+    }
+
+    // Non-image file
+    const mediaId = await uploadFileToMediaId(config, mediaUrl);
+    const fileType = ext.slice(1) || "file";
+    const result = await sendFileViaOpenAPI({ config, target, mediaId, fileName, fileType });
+    return result.processQueryKey;
+  }
+
+  // Remote URL: send as inline image
+  const result = await sendImageViaOpenAPI({ config, target, photoURL: mediaUrl });
+  return result.processQueryKey;
+}
+
 async function uploadFileToMediaId(
   config: DingTalkConfig,
   filePath: string,
@@ -169,21 +209,4 @@ async function uploadFileToMediaId(
     throw new Error(`[dingtalk] Media upload returned no media_id: errcode=${data.errcode}`);
   }
   return data.media_id;
-}
-
-async function sendMediaViaOpenAPIWithUpload(
-  config: DingTalkConfig,
-  target: OpenAPISendTarget,
-  mediaUrl: string,
-): Promise<string> {
-  if (isLocalPath(mediaUrl)) {
-    const mediaId = await uploadFileToMediaId(config, mediaUrl);
-    const fileName = path.basename(mediaUrl);
-    const fileType = path.extname(fileName).slice(1).toLowerCase() || "file";
-    const result = await sendFileViaOpenAPI({ config, target, mediaId, fileName, fileType });
-    return result.processQueryKey;
-  }
-
-  const result = await sendImageViaOpenAPI({ config, target, photoURL: mediaUrl });
-  return result.processQueryKey;
 }

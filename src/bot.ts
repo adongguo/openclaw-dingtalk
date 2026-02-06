@@ -119,7 +119,7 @@ export async function handleDingTalkMessage(params: {
       },
     });
 
-    const preview = ctx.content.replace(/\s+/g, " ").slice(0, 160);
+    const preview = (typeof ctx.content === "string" ? ctx.content : String(ctx.content || "")).replace(/\s+/g, " ").slice(0, 160);
     const inboundLabel = isGroup
       ? `DingTalk message in group ${ctx.conversationId}`
       : `DingTalk DM from ${ctx.senderNick}`;
@@ -236,7 +236,9 @@ function parseMessageContent(message: DingTalkIncomingMessage): string {
   if (message.msgtype === "richText" && message.content) {
     const parsed = safeParseRichText(message.content);
     if (parsed) {
-      return extractRichTextContent(parsed);
+      const extracted = extractRichTextContent(parsed);
+      // Ensure we always return a string
+      return typeof extracted === "string" ? extracted : "[富文本消息]";
     }
     return typeof message.content === "string" ? message.content : "[富文本消息]";
   }
@@ -250,6 +252,7 @@ function checkBotMentioned(message: DingTalkIncomingMessage): boolean {
 }
 
 function stripBotMention(text: string): string {
+  if (typeof text !== "string") return "";
   return text.replace(/^@\S+\s*/g, "").trim();
 }
 

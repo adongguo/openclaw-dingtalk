@@ -375,20 +375,11 @@ export async function getOapiAccessToken(
       }
     }
 
-    // Manual token request
-    const response = await fetch("https://oapi.dingtalk.com/gettoken", {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
-
-    if (!response.ok) {
-      return null;
+    // Manual token request using appKey/appSecret from config
+    if (config.appKey && config.appSecret) {
+      return getOapiTokenForConfig(config);
     }
 
-    const data = (await response.json()) as { errcode?: number; access_token?: string };
-    if (data.errcode === 0 && data.access_token) {
-      return data.access_token;
-    }
     return null;
   } catch {
     return null;
@@ -658,9 +649,8 @@ export async function uploadMediaDingTalk(params: {
 }
 
 /**
- * Send an image via sessionWebhook using markdown with image URL.
- * Note: DingTalk sessionWebhook has limited support for images.
- * For better image support, use OpenAPI.
+ * Send an image via sessionWebhook using actionCard format.
+ * DingTalk actionCard renders ![image](url) inline, unlike markdown messages.
  */
 export async function sendImageDingTalk(params: {
   cfg: ClawdbotConfig;
@@ -688,10 +678,11 @@ export async function sendImageDingTalk(params: {
     headers["x-acs-dingtalk-access-token"] = accessToken;
   }
 
-  // Use markdown format to embed image
+  // Use actionCard for inline image rendering.
+  // DingTalk actionCard text renders ![image](url) inline, unlike markdown messages.
   const message = {
-    msgtype: "markdown",
-    markdown: {
+    msgtype: "actionCard",
+    actionCard: {
       title: title || "Image",
       text: `![image](${imageUrl})`,
     },
@@ -869,7 +860,7 @@ export async function sendMediaDingTalk(params: {
     }
   }
 
-  // For local files, we need to upload first
+  // For local files, upload first then send
   if (buffer && client) {
     const uploadResult = await uploadMediaDingTalk({
       cfg,
@@ -879,9 +870,19 @@ export async function sendMediaDingTalk(params: {
       client,
     });
 
+    if (uploadResult && fileType === "image") {
+      // Send uploaded image via actionCard with media_id.
+      // DingTalk actionCard renders ![image](media_id) inline.
+      return sendImageDingTalk({
+        cfg,
+        sessionWebhook,
+        imageUrl: uploadResult.mediaId,
+        title: name,
+        client,
+      });
+    }
+
     if (uploadResult) {
-      // Note: mediaId usage depends on specific DingTalk API
-      // For now, return a result indicating upload was successful
       return {
         conversationId: "",
         processQueryKey: uploadResult.mediaId,
@@ -890,4 +891,27 @@ export async function sendMediaDingTalk(params: {
   }
 
   throw new Error("Unable to send media: upload failed or no client available");
+}
+
+/**
+ * Get oapi access token using appKey/appSecret from DingTalk config.
+ */
+async function getOapiTokenForConfig(config: DingTalkConfig): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `https://oapi.dingtalk.com/gettoken?appkey=${encodeURIComponent(config.appKey!)}&appsecret=${encodeURIComponent(config.appSecret!)}`,
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as { errcode?: number; access_token?: string };
+    if (data.errcode === 0 && data.access_token) {
+      return data.access_token;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

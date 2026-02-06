@@ -7,15 +7,35 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #187 | 4:40 PM | 🔵 | DingTalk Send Functions SessionWebhook Architecture | ~881 |
+| #190 | 4:41 PM | 🔵 | DingTalk Configuration Schema with Zod Validation | ~247 |
+| #189 | " | 🔵 | DingTalk Stream Monitor Implementation with Message Reception | ~810 |
+| #188 | 4:40 PM | 🔵 | Complete DingTalk ChannelPlugin Implementation Structure | ~370 |
+| #187 | " | 🔵 | DingTalk Send Functions SessionWebhook Architecture | ~881 |
 | #186 | " | 🔵 | DingTalk Outbound Adapter SessionWebhook Limitation | ~668 |
+| #183 | 4:38 PM | 🔵 | DingTalk Bot Message Processing Complete Flow | ~1111 |
+| #182 | " | 🔵 | Reply Dispatcher Return Values and Error Handling | ~435 |
+| #177 | 4:36 PM | 🔵 | DingTalk TypeScript Type Definitions Complete Structure | ~1022 |
+| #176 | " | 🔵 | DingTalk Channel Plugin Configuration and Capabilities Review | ~641 |
+| #160 | 4:32 PM | 🔵 | Complete DingTalk Plugin Codebase Analysis - Comprehensive Architecture Review | ~1490 |
 | #153 | 4:30 PM | 🔵 | DingTalk Reactions Module Stub Implementation | ~534 |
+| #152 | " | 🔵 | DingTalk Channel Onboarding Wizard Implementation | ~791 |
 | #149 | 4:29 PM | 🔵 | DingTalk Target ID Parsing and Normalization Utilities | ~543 |
+| #148 | " | 🔵 | DingTalk Streaming Message Handler with AI Card and Gateway Integration | ~851 |
 | #147 | " | 🔵 | DingTalk Session Management with Timeout and Reset Commands | ~657 |
-| #145 | 4:28 PM | 🔵 | DingTalk Runtime Singleton Management | ~348 |
+| #146 | 4:28 PM | 🔵 | DingTalk AI Card Streaming Implementation with Typewriter Effect | ~766 |
+| #145 | " | 🔵 | DingTalk Runtime Singleton Management | ~348 |
+| #143 | " | 🔵 | DingTalk Reply Dispatcher with Render Mode Selection and Typing Indicators | ~726 |
 | #141 | 4:27 PM | 🔵 | DingTalk Media Handling Implementation with Local Image Upload and File Markers | ~883 |
 | #140 | " | 🔵 | DingTalk Message Sending Functions via SessionWebhook | ~712 |
 | #139 | 4:26 PM | 🔵 | DingTalk Stream Connection Monitor with Message Handling Pipeline | ~692 |
 | #138 | " | 🔵 | DingTalk Configuration Schema with Media Upload and AI Card Features | ~703 |
 | #137 | " | 🔵 | OpenClaw DingTalk Channel Plugin Architecture and Capabilities | ~717 |
+
+### Feb 6, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #1242 | 1:03 PM | 🟣 | Enhanced shouldUseCard to detect markdown images for actionCard rendering | ~396 |
+| #1238 | 1:02 PM | 🔴 | Fixed sampleImageMsg to use media_id directly instead of download URL | ~409 |
+| #1232 | 12:17 PM | 🔵 | Examined send.ts webhook message sending implementations | ~356 |
 </claude-mem-context>

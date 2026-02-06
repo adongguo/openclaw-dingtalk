@@ -15,6 +15,7 @@ import {
   removeTypingIndicator,
   type TypingIndicatorState,
 } from "./typing.js";
+import { processLocalImages, getOapiAccessToken } from "./media.js";
 
 /**
  * Detect if text contains markdown elements that benefit from card rendering.
@@ -25,6 +26,8 @@ function shouldUseCard(text: string): boolean {
   if (/```[\s\S]*?```/.test(text)) return true;
   // Tables (at least header + separator row with |)
   if (/\|.+\|[\r\n]+\|[-:| ]+\|/.test(text)) return true;
+  // Markdown images (including media_id references like @lAD...)
+  if (/!\[.*?\]\(.+?\)/.test(text)) return true;
   return false;
 }
 
@@ -45,6 +48,9 @@ export function createDingTalkReplyDispatcher(params: CreateDingTalkReplyDispatc
     cfg,
     agentId,
   });
+
+  // Lazily cached oapi token for image uploads in deliver callback
+  let cachedOapiToken: string | null | undefined;
 
   // DingTalk doesn't have a native typing indicator API.
   // We could use emoji reactions if available.
@@ -107,14 +113,31 @@ export function createDingTalkReplyDispatcher(params: CreateDingTalkReplyDispatc
       onReplyStart: typingCallbacks.onReplyStart,
       deliver: async (payload: ReplyPayload) => {
         params.runtime.log?.(`dingtalk deliver called: text=${payload.text?.slice(0, 100)}`);
-        const text = payload.text ?? "";
+        let text = payload.text ?? "";
         if (!text.trim()) {
           params.runtime.log?.(`dingtalk deliver: empty text, skipping`);
           return;
         }
 
-        // Check render mode: auto (default), raw, or card
+        // Process local images: upload to DingTalk and replace paths with media_id
         const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+        if (dingtalkCfg && dingtalkCfg.enableMediaUpload !== false) {
+          try {
+            if (cachedOapiToken === undefined) {
+              cachedOapiToken = await getOapiAccessToken(dingtalkCfg, client);
+            }
+            const log = {
+              info: (msg: string) => params.runtime.log?.(msg),
+              warn: (msg: string) => params.runtime.log?.(msg),
+              error: (msg: string) => params.runtime.error?.(msg),
+            };
+            text = await processLocalImages(text, cachedOapiToken, log);
+          } catch (err) {
+            params.runtime.error?.(`dingtalk deliver: image processing failed: ${String(err)}`);
+          }
+        }
+
+        // Check render mode: auto (default), raw, or card
         const renderMode = dingtalkCfg?.renderMode ?? "auto";
 
         // Determine if we should use card for this message
