@@ -60,6 +60,8 @@ export {
   failAICard,
   getAccessToken,
   clearAccessTokenCache,
+  getOrCreateAICard,
+  cleanupStaleAICards,
   AICardStatus,
   type AICardInstance,
   type AICardStatusType,
@@ -92,6 +94,21 @@ export {
   shouldUseStreamingMode,
   type StreamingHandlerParams,
 } from "./src/streaming-handler.js";
+
+// Message deduplication
+export { isDuplicate } from "./src/dedup.js";
+
+// Peer ID case registry
+export { registerPeerId, resolveOriginalCase } from "./src/peer-id-registry.js";
+
+// Retry utility
+export { fetchWithRetry, type RetryConfig } from "./src/retry.js";
+
+// Log masking
+export { maskSensitive, maskLogObject } from "./src/log-mask.js";
+
+// Group member tracking
+export { trackGroupMember, getGroupMembers, getGroupMemberCount, clearGroupMembers } from "./src/group-members.js";
 
 const plugin = {
   id: "dingtalk",

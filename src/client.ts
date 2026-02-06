@@ -23,6 +23,7 @@ export function createDingTalkClient(cfg: DingTalkConfig): DWClient {
   const client = new DWClient({
     clientId: creds.appKey,
     clientSecret: creds.appSecret,
+    keepAlive: true,
   });
 
   cachedClient = client;

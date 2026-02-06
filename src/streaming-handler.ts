@@ -123,6 +123,19 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
 
   log?.info?.(`[DingTalk][Streaming] Message from ${senderName}: "${content.text.slice(0, 50)}..."`);
 
+  // Send thinking indicator (skip if AI Card mode is enabled - the card has its own visual state)
+  if (config.showThinking !== false && config.aiCardMode === "disabled") {
+    try {
+      await sendDingTalkTextMessage({
+        sessionWebhook,
+        text: "🤔 思考中...",
+        client,
+      });
+    } catch {
+      // Non-fatal: thinking indicator is best-effort
+    }
+  }
+
   // ===== Session Management =====
   const sessionTimeout = config.sessionTimeout ?? DEFAULT_SESSION_TIMEOUT;
   const forceNewSession = isNewSessionCommand(content.text);
@@ -148,6 +161,18 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
   // ===== Build System Prompts =====
   const systemPrompts: string[] = [];
   let oapiToken: string | null = null;
+
+  // Per-group system prompt
+  if (!isDirect) {
+    const groupSystemPrompt = config.groups?.[data.conversationId]?.systemPrompt
+      ?? config.groups?.["*"]?.systemPrompt;
+    if (groupSystemPrompt) {
+      systemPrompts.push(groupSystemPrompt);
+    }
+  }
+
+  // DingTalk conversation context
+  systemPrompts.push(`[DingTalk Context] conversationId=${data.conversationId}, chatType=${isDirect ? "p2p" : "group"}, sender=${senderName} (${senderId})`);
 
   // Media upload prompt
   if (config.enableMediaUpload !== false) {

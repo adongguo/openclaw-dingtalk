@@ -93,6 +93,7 @@ export const DingTalkConfigSchema = z
     renderMode: RenderModeSchema, // raw = plain text, card = action card with markdown
     // DingTalk specific options
     cooldownMs: z.number().int().positive().optional(), // Cooldown between messages to avoid rate limiting
+    showThinking: z.boolean().optional().default(true), // Show "thinking" indicator before agent responds
     groupSessionScope: GroupSessionScopeSchema, // per-group (default) = shared, per-user = isolated per user in groups
     // AI Card streaming options
     aiCardMode: AICardModeSchema, // enabled (default) = use AI Card streaming, disabled = regular messages

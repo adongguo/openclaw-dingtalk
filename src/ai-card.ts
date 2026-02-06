@@ -34,6 +34,14 @@ export interface AICardInstance {
   inputingStarted: boolean;
 }
 
+export type AICardState = "PROCESSING" | "INPUTING" | "FINISHED" | "FAILED";
+
+interface CachedAICard {
+  card: AICardInstance;
+  state: AICardState;
+  createdAt: number;
+}
+
 export interface AICardMessageData {
   conversationType: "1" | "2";
   conversationId: string;
@@ -46,6 +54,11 @@ interface Logger {
   warn?: (msg: string) => void;
   error?: (msg: string) => void;
 }
+
+// ============ AI Card Instance Cache ============
+
+const cardCache = new Map<string, CachedAICard>();
+const CARD_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour for terminal states
 
 // ============ Access Token Cache ============
 
@@ -92,6 +105,54 @@ export function clearAccessTokenCache(): void {
 // ============ AI Card Functions ============
 
 /**
+ * Get an existing active AI Card or create a new one.
+ * Reuses cards that are still in PROCESSING or INPUTING state.
+ */
+export async function getOrCreateAICard(
+  config: DingTalkConfig,
+  data: AICardMessageData,
+  log?: Logger,
+): Promise<AICardInstance | null> {
+  const cacheKey = buildCardCacheKey(data);
+  const cached = cardCache.get(cacheKey);
+
+  if (cached && (cached.state === "PROCESSING" || cached.state === "INPUTING")) {
+    const age = Date.now() - cached.createdAt;
+    if (age < CARD_CACHE_TTL_MS) {
+      log?.info?.(`[DingTalk][AICard] Reusing cached card: ${cached.card.cardInstanceId} (state=${cached.state})`);
+      return cached.card;
+    }
+    // Expired, remove from cache
+    cardCache.delete(cacheKey);
+  }
+
+  const card = await createAICard(config, data, log);
+  if (card) {
+    cardCache.set(cacheKey, { card, state: "PROCESSING", createdAt: Date.now() });
+  }
+  return card;
+}
+
+/**
+ * Clean up stale AI Card cache entries.
+ * Removes cards in terminal states (FINISHED/FAILED) older than TTL.
+ */
+export function cleanupStaleAICards(): number {
+  const now = Date.now();
+  let cleaned = 0;
+
+  for (const [key, cached] of cardCache) {
+    const isTerminal = cached.state === "FINISHED" || cached.state === "FAILED";
+    if (isTerminal && now - cached.createdAt > CARD_CACHE_TTL_MS) {
+      cardCache.delete(key);
+      cleaned++;
+    }
+  }
+
+  return cleaned;
+}
+
+/**
  * Create and deliver an AI Card instance.
  * Returns null if creation fails (caller should fall back to regular message).
  */
@@ -122,14 +183,19 @@ export async function createAICard(
     };
 
     log?.info?.(`[DingTalk][AICard] POST /v1.0/card/instances body=${JSON.stringify(createBody)}`);
-    const createResp = await fetch(`${DINGTALK_API}/v1.0/card/instances`, {
-      method: "POST",
-      headers: {
-        "x-acs-dingtalk-access-token": token,
-        "Content-Type": "application/json",
+    const createResp = await fetchWithTokenRefresh(
+      config,
+      `${DINGTALK_API}/v1.0/card/instances`,
+      {
+        method: "POST",
+        headers: {
+          "x-acs-dingtalk-access-token": token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(createBody),
       },
-      body: JSON.stringify(createBody),
-    });
+      log,
+    );
 
     if (!createResp.ok) {
       const text = await createResp.text();
@@ -159,14 +225,19 @@ export async function createAICard(
     }
 
     log?.info?.(`[DingTalk][AICard] POST /v1.0/card/instances/deliver body=${JSON.stringify(deliverBody)}`);
-    const deliverResp = await fetch(`${DINGTALK_API}/v1.0/card/instances/deliver`, {
-      method: "POST",
-      headers: {
-        "x-acs-dingtalk-access-token": token,
-        "Content-Type": "application/json",
+    const deliverResp = await fetchWithTokenRefresh(
+      config,
+      `${DINGTALK_API}/v1.0/card/instances/deliver`,
+      {
+        method: "POST",
+        headers: {
+          "x-acs-dingtalk-access-token": token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(deliverBody),
       },
-      body: JSON.stringify(deliverBody),
-    });
+      log,
+    );
 
     if (!deliverResp.ok) {
       const text = await deliverResp.text();
@@ -223,12 +294,16 @@ export async function streamAICard(
 
     if (!statusResp.ok) {
       const text = await statusResp.text();
+      if (statusResp.status === 401) {
+        log?.warn?.(`[DingTalk][AICard] INPUTING switch got 401, access token may be expired`);
+      }
       log?.error?.(`[DingTalk][AICard] INPUTING switch failed: ${statusResp.status} ${text}`);
       throw new Error(`INPUTING switch failed: ${statusResp.status}`);
     }
 
     log?.info?.(`[DingTalk][AICard] INPUTING response: ${statusResp.status}`);
     card.inputingStarted = true;
+    updateCardState(card.cardInstanceId, "INPUTING");
   }
 
   // Stream content update
@@ -256,6 +331,9 @@ export async function streamAICard(
 
   if (!streamResp.ok) {
     const text = await streamResp.text();
+    if (streamResp.status === 401) {
+      log?.warn?.(`[DingTalk][AICard] Streaming update got 401, access token may be expired`);
+    }
     log?.error?.(`[DingTalk][AICard] Streaming update failed: ${streamResp.status} ${text}`);
     throw new Error(`Streaming update failed: ${streamResp.status}`);
   }
@@ -299,10 +377,15 @@ export async function finishAICard(card: AICardInstance, content: string, log?: 
 
   if (!finishResp.ok) {
     const text = await finishResp.text();
+    if (finishResp.status === 401) {
+      log?.warn?.(`[DingTalk][AICard] FINISHED update got 401, access token may be expired`);
+    }
     log?.error?.(`[DingTalk][AICard] FINISHED update failed: ${finishResp.status} ${text}`);
   } else {
     log?.info?.(`[DingTalk][AICard] FINISHED response: ${finishResp.status}`);
   }
+
+  updateCardState(card.cardInstanceId, "FINISHED");
 }
 
 /**
@@ -326,7 +409,7 @@ export async function failAICard(card: AICardInstance, errorMessage: string, log
   };
 
   try {
-    await fetch(`${DINGTALK_API}/v1.0/card/instances`, {
+    const resp = await fetch(`${DINGTALK_API}/v1.0/card/instances`, {
       method: "PUT",
       headers: {
         "x-acs-dingtalk-access-token": card.accessToken,
@@ -334,8 +417,56 @@ export async function failAICard(card: AICardInstance, errorMessage: string, log
       },
       body: JSON.stringify(body),
     });
+    if (resp.status === 401) {
+      log?.warn?.(`[DingTalk][AICard] Failed card update got 401, access token may be expired`);
+    }
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
     log?.error?.(`[DingTalk][AICard] Failed to mark card as failed: ${errMsg}`);
   }
+
+  updateCardState(card.cardInstanceId, "FAILED");
+}
+
+// ============ Private Helpers ============
+
+function buildCardCacheKey(data: AICardMessageData): string {
+  const isDM = data.conversationType === "1";
+  return isDM
+    ? `dm:${data.senderStaffId || data.senderId}`
+    : `group:${data.conversationId}`;
+}
+
+function updateCardState(cardInstanceId: string, state: AICardState): void {
+  for (const cached of cardCache.values()) {
+    if (cached.card.cardInstanceId === cardInstanceId) {
+      cached.state = state;
+      break;
+    }
+  }
+}
+
+/**
+ * Fetch with automatic token refresh on 401.
+ */
+async function fetchWithTokenRefresh(
+  config: DingTalkConfig,
+  url: string,
+  options: RequestInit,
+  log?: Logger,
+): Promise<Response> {
+  const response = await fetch(url, options);
+
+  if (response.status === 401) {
+    log?.warn?.(`[DingTalk][AICard] Got 401, refreshing token and retrying`);
+    clearAccessTokenCache();
+    const newToken = await getAccessToken(config);
+
+    const newHeaders = { ...Object.fromEntries(new Headers(options.headers).entries()) };
+    newHeaders["x-acs-dingtalk-access-token"] = newToken;
+
+    return fetch(url, { ...options, headers: newHeaders });
+  }
+
+  return response;
 }

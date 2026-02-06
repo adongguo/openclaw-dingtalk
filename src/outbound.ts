@@ -11,6 +11,7 @@ import {
 } from "./openapi-send.js";
 import fs from "fs";
 import path from "path";
+import { resolveOriginalCase } from "./peer-id-registry.js";
 
 export type OutboundTarget =
   | { kind: "webhook"; url: string }
@@ -104,12 +105,12 @@ function parseOutboundTarget(to: string): OutboundTarget {
 
   const userMatch = to.match(/^(?:user|staff):(.+)$/i);
   if (userMatch) {
-    return { kind: "user", id: userMatch[1] };
+    return { kind: "user", id: resolveOriginalCase(userMatch[1]) };
   }
 
   const groupMatch = to.match(/^(?:group|chat):(.+)$/i);
   if (groupMatch) {
-    return { kind: "group", id: groupMatch[1] };
+    return { kind: "group", id: resolveOriginalCase(groupMatch[1]) };
   }
 
   if (to.startsWith("cid")) {
@@ -118,7 +119,7 @@ function parseOutboundTarget(to: string): OutboundTarget {
 
   // Bare ID without prefix: webhook URLs always start with http(s)://,
   // group conversationIds start with "cid", so anything else is a staffId.
-  return { kind: "user", id: to };
+  return { kind: "user", id: resolveOriginalCase(to) };
 }
 
 function isLocalPath(url: string): boolean {

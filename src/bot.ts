@@ -16,7 +16,10 @@ import {
 } from "./policy.js";
 import { createDingTalkReplyDispatcher } from "./reply-dispatcher.js";
 import { downloadMediaDingTalk } from "./media.js";
+import { sendDingTalkTextMessage } from "./send.js";
 import { safeParseRichText, extractRichTextContent, extractRichTextDownloadCodes } from "./richtext.js";
+import { registerPeerId } from "./peer-id-registry.js";
+import { trackGroupMember } from "./group-members.js";
 
 export function parseDingTalkMessage(message: DingTalkIncomingMessage): DingTalkMessageContext {
   const rawContent = parseMessageContent(message);
@@ -56,6 +59,9 @@ export async function handleDingTalkMessage(params: {
   const ctx = parseDingTalkMessage(message);
   const isGroup = ctx.chatType === "group";
 
+  // Register peer ID for case-preserving outbound resolution
+  registerPeerId(ctx.senderId);
+
   log(`dingtalk: received message from ${ctx.senderNick} (${ctx.senderId}) in ${ctx.conversationId} (${ctx.chatType})`);
 
   const historyLimit = Math.max(
@@ -63,10 +69,15 @@ export async function handleDingTalkMessage(params: {
     dingtalkCfg?.historyLimit ?? cfg.messages?.groupChat?.historyLimit ?? DEFAULT_GROUP_HISTORY_LIMIT,
   );
 
+  let groupSystemPrompt: string | undefined;
+
   if (isGroup) {
     const groupPolicy = dingtalkCfg?.groupPolicy ?? "open";
     const groupAllowFrom = dingtalkCfg?.groupAllowFrom ?? [];
     const groupConfig = resolveDingTalkGroupConfig({ cfg: dingtalkCfg, groupId: ctx.conversationId });
+
+    groupSystemPrompt = groupConfig?.systemPrompt
+      ?? resolveDingTalkGroupConfig({ cfg: dingtalkCfg, groupId: "*" })?.systemPrompt;
 
     const senderAllowFrom = groupConfig?.allowFrom ?? groupAllowFrom;
     const allowed = isDingTalkGroupAllowed({
@@ -78,8 +89,22 @@ export async function handleDingTalkMessage(params: {
 
     if (!allowed) {
       log(`dingtalk: sender ${ctx.senderId} not in group allowlist`);
+      if (groupPolicy === "allowlist") {
+        try {
+          await sendDingTalkTextMessage({
+            sessionWebhook: ctx.sessionWebhook,
+            text: `⛔ 群组访问受限\n\n您的用户ID: \`${ctx.senderId}\`\n\n请联系管理员将此ID添加到群组允许列表中。`,
+            client,
+          });
+        } catch {
+          // Non-fatal: access denied feedback is best-effort
+        }
+      }
       return;
     }
+    // Track group member for passive roster building
+    trackGroupMember(ctx.conversationId, ctx.senderId, ctx.senderNick ?? ctx.senderId);
+
     // Note: Group messages require @mention to reach the bot - this is a DingTalk platform limitation.
     // The bot only receives messages where it was mentioned, so no additional check is needed here.
   } else {
@@ -93,8 +118,30 @@ export async function handleDingTalkMessage(params: {
       });
       if (!match.allowed) {
         log(`dingtalk: sender ${ctx.senderId} not in DM allowlist`);
+        try {
+          await sendDingTalkTextMessage({
+            sessionWebhook: ctx.sessionWebhook,
+            text: `⛔ 访问受限\n\n您的用户ID: \`${ctx.senderId}\`\n\n请联系管理员将此ID添加到允许列表中。`,
+            client,
+          });
+        } catch {
+          // Non-fatal: access denied feedback is best-effort
+        }
         return;
       }
+    }
+  }
+
+  // Send thinking indicator before dispatching to agent
+  if (dingtalkCfg?.showThinking !== false) {
+    try {
+      await sendDingTalkTextMessage({
+        sessionWebhook: ctx.sessionWebhook,
+        text: "🤔 思考中...",
+        client,
+      });
+    } catch {
+      // Non-fatal: thinking indicator is best-effort
     }
   }
 
@@ -151,6 +198,12 @@ export async function handleDingTalkMessage(params: {
     });
 
     let combinedBody = body;
+
+    // Embed DingTalk conversation context for agent awareness
+    if (isGroup && groupSystemPrompt) {
+      combinedBody = `[群组指令] ${groupSystemPrompt}\n\n${combinedBody}`;
+    }
+
     const historyKey = isGroup ? ctx.conversationId : undefined;
 
     if (isGroup && historyKey && chatHistories) {

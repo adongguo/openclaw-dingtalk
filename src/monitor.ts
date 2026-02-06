@@ -1,3 +1,6 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { DWClient, TOPIC_ROBOT } from "dingtalk-stream";
 import type { ClawdbotConfig, RuntimeEnv, HistoryEntry } from "openclaw/plugin-sdk";
 import type { DingTalkConfig, DingTalkIncomingMessage } from "./types.js";
@@ -5,6 +8,8 @@ import { createDingTalkClient } from "./client.js";
 import { resolveDingTalkCredentials } from "./accounts.js";
 import { handleDingTalkMessage } from "./bot.js";
 import { cleanupExpiredSessions, DEFAULT_SESSION_TIMEOUT } from "./session.js";
+import { isDuplicate } from "./dedup.js";
+import { registerPeerId } from "./peer-id-registry.js";
 
 export type MonitorDingTalkOpts = {
   config?: ClawdbotConfig;
@@ -101,6 +106,18 @@ async function monitorStream(params: {
             }
           }
 
+          // Deduplicate messages to prevent double-processing
+          if (isDuplicate(messageData.msgId)) {
+            log(`dingtalk: duplicate message ${messageData.msgId}, skipping`);
+            client.socketCallBackResponse(res.headers.messageId, { success: true });
+            return;
+          }
+
+          // Register peer ID for case-preserving outbound resolution
+          if (messageData.senderStaffId) {
+            registerPeerId(messageData.senderStaffId);
+          }
+
           log(`dingtalk: received message from ${messageData.senderNick}: ${messageData.text?.content || messageData.msgtype}`);
 
           await handleDingTalkMessage({
@@ -119,6 +136,9 @@ async function monitorStream(params: {
           client.socketCallBackResponse(res.headers.messageId, { success: false, error: String(err) });
         }
       });
+
+      // Clean up stale temp files from previous sessions
+      cleanupTempFiles(log);
 
       // Connect to DingTalk Stream
       client.connect();
@@ -152,5 +172,38 @@ export function stopDingTalkMonitor(): void {
       // Ignore errors
     }
     currentClient = null;
+  }
+}
+
+// ============ Private Functions ============
+
+function cleanupTempFiles(log: (msg: string) => void): void {
+  try {
+    const tmpDir = os.tmpdir();
+    const entries = fs.readdirSync(tmpDir);
+    const now = Date.now();
+    const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+    let cleaned = 0;
+
+    for (const entry of entries) {
+      if (!/^dingtalk_\d+\..+$/.test(entry)) continue;
+
+      try {
+        const fullPath = path.join(tmpDir, entry);
+        const stats = fs.statSync(fullPath);
+        if (now - stats.mtimeMs > maxAge) {
+          fs.unlinkSync(fullPath);
+          cleaned++;
+        }
+      } catch {
+        // Skip files that can't be accessed
+      }
+    }
+
+    if (cleaned > 0) {
+      log(`dingtalk: cleaned up ${cleaned} stale temp files`);
+    }
+  } catch (err) {
+    log(`dingtalk: temp file cleanup failed: ${String(err)}`);
   }
 }
