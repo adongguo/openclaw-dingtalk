@@ -110,6 +110,12 @@ export { maskSensitive, maskLogObject } from "./src/log-mask.js";
 // Group member tracking
 export { trackGroupMember, getGroupMembers, getGroupMemberCount, clearGroupMembers } from "./src/group-members.js";
 
+// SDK command handlers
+export { formatStatusResponse, formatSessionsResponse, formatWhoamiResponse } from "./src/command-handlers.js";
+
+// Agent tools
+export { registerDingTalkTools } from "./src/agent-tools.js";
+
 const plugin = {
   id: "dingtalk",
   name: "DingTalk",
@@ -118,7 +124,55 @@ const plugin = {
   register(api: ClawdbotPluginApi) {
     setDingTalkRuntime(api.runtime);
     api.registerChannel({ plugin: dingtalkPlugin });
+    registerCommands(api);
+    registerTools(api);
   },
 };
 
 export default plugin;
+
+// ============ Private Functions ============
+
+function registerCommands(api: ClawdbotPluginApi): void {
+  const registerCommand = (api as Record<string, unknown>).registerCommand as
+    | ((cmd: Record<string, unknown>) => void)
+    | undefined;
+
+  if (!registerCommand) return;
+
+  registerCommand.call(api, {
+    name: "dingtalk-status",
+    description: "Show DingTalk connection status and active session count",
+    handler: async (ctx: Record<string, unknown>) => {
+      const { formatStatusResponse } = await import("./src/command-handlers.js");
+      return formatStatusResponse(ctx.config);
+    },
+  });
+
+  registerCommand.call(api, {
+    name: "dingtalk-sessions",
+    description: "List active DingTalk sessions",
+    handler: async (ctx: Record<string, unknown>) => {
+      const { formatSessionsResponse } = await import("./src/command-handlers.js");
+      return formatSessionsResponse(ctx.config);
+    },
+  });
+
+  registerCommand.call(api, {
+    name: "dingtalk-whoami",
+    description: "Show the sender's DingTalk staffId and permissions",
+    handler: async (ctx: Record<string, unknown>) => {
+      const { formatWhoamiResponse } = await import("./src/command-handlers.js");
+      const senderId = (ctx.senderId ?? ctx.userId ?? "unknown") as string;
+      return formatWhoamiResponse(senderId, ctx.config);
+    },
+  });
+}
+
+function registerTools(api: ClawdbotPluginApi): void {
+  import("./src/agent-tools.js").then(({ registerDingTalkTools }) => {
+    registerDingTalkTools(api);
+  }).catch(() => {
+    // Agent tools registration is optional; silently skip if module fails to load
+  });
+}

@@ -73,6 +73,9 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
     messageToolHints: () => [
       "- DingTalk targeting: messages are sent via sessionWebhook to the current conversation.",
       "- DingTalk supports text, markdown, and ActionCard message types.",
+      "- Images in markdown syntax (e.g. ![desc](path)) are auto-uploaded to DingTalk.",
+      '- Use [DINGTALK_FILE]{"path":"...","name":"..."}[/DINGTALK_FILE] markers to send files as separate file cards.',
+      "- In group chats, the bot only receives messages where it is @mentioned — this is a DingTalk platform limitation.",
     ],
   },
   groups: {

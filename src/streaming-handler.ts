@@ -9,11 +9,13 @@ import type { DWClient } from "dingtalk-stream";
 import type { DingTalkConfig, DingTalkIncomingMessage } from "./types.js";
 import { resolveDingTalkAccountConfig } from "./accounts.js";
 import { createAICard, streamAICard, finishAICard, failAICard } from "./ai-card.js";
-import { isNewSessionCommand, getSessionKey, DEFAULT_SESSION_TIMEOUT } from "./session.js";
+import { getSessionKey, DEFAULT_SESSION_TIMEOUT } from "./session.js";
 import { streamFromGateway } from "./gateway-stream.js";
 import { buildMediaSystemPrompt, processLocalImages, processFileMarkers, getOapiAccessToken, downloadMediaDingTalk } from "./media.js";
 import { sendDingTalkMessage, sendDingTalkTextMessage } from "./send.js";
 import { safeParseRichText, extractRichTextContent, extractRichTextDownloadCodes } from "./richtext.js";
+import { executeCommand } from "./commands.js";
+import { thinkingTemplate, thinkingEnabled, errorTemplate } from "./templates.js";
 
 // ============ Types ============
 
@@ -127,12 +129,40 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
 
   log?.info?.(`[DingTalk][Streaming] Message from ${senderName}: "${content.text.slice(0, 50)}..."`);
 
-  // Send thinking indicator (skip if AI Card mode is enabled - the card has its own visual state)
-  if (config.showThinking !== false && config.aiCardMode === "disabled") {
+  // Check for commands before dispatching to agent
+  const commandResult = executeCommand({
+    text: content.text,
+    config,
+    senderId,
+    senderName,
+    sessionIdentifier,
+    sessionTimeout: config.sessionTimeout,
+    log,
+  });
+
+  if (commandResult.handled) {
     try {
+      await sendDingTalkMessage({
+        sessionWebhook,
+        text: commandResult.response,
+        useMarkdown: true,
+        atUserId: !isDirect ? senderId : undefined,
+        client,
+      });
+    } catch {
+      // Non-fatal: command response is best-effort
+    }
+    log?.info?.(`[DingTalk][Streaming] Command handled: ${content.text.trim().slice(0, 30)}`);
+    return;
+  }
+
+  // Send thinking indicator (skip if AI Card mode is enabled - the card has its own visual state)
+  if (config.showThinking !== false && config.aiCardMode === "disabled" && thinkingEnabled(config.templates)) {
+    try {
+      const thinking = thinkingTemplate(config.templates);
       await sendDingTalkTextMessage({
         sessionWebhook,
-        text: "🤔 思考中...",
+        text: thinking.text,
         client,
       });
     } catch {
@@ -142,21 +172,6 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
 
   // ===== Session Management =====
   const sessionTimeout = config.sessionTimeout ?? DEFAULT_SESSION_TIMEOUT;
-  const forceNewSession = isNewSessionCommand(content.text);
-
-  // Handle new session command
-  if (forceNewSession) {
-    const { sessionKey } = getSessionKey(sessionIdentifier, true, sessionTimeout, log);
-    await sendDingTalkMessage({
-      sessionWebhook,
-      text: "✨ 已开启新会话，之前的对话已清空。",
-      useMarkdown: false,
-      atUserId: !isDirect ? senderId : undefined,
-      client,
-    });
-    log?.info?.(`[DingTalk][Streaming] New session requested: ${sessionIdentifier}, key=${sessionKey}`);
-    return;
-  }
 
   // Get or create session
   const { sessionKey, isNew } = getSessionKey(sessionIdentifier, false, sessionTimeout, log);
@@ -166,12 +181,25 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
   const systemPrompts: string[] = [];
   let oapiToken: string | null = null;
 
-  // Per-group system prompt
+  // Per-group system prompt and skills
   if (!isDirect) {
-    const groupSystemPrompt = config.groups?.[data.conversationId]?.systemPrompt
+    const groupConfig = config.groups?.[data.conversationId];
+    const groupSystemPrompt = groupConfig?.systemPrompt
       ?? config.groups?.["*"]?.systemPrompt;
     if (groupSystemPrompt) {
       systemPrompts.push(groupSystemPrompt);
+    }
+    const groupSkills = groupConfig?.skills ?? [];
+    if (groupSkills.length > 0) {
+      systemPrompts.push(`[可用技能] ${groupSkills.join(", ")}`);
+    }
+  }
+
+  // Per-DM system prompt
+  if (isDirect) {
+    const dmConfig = config.dms?.[senderId];
+    if (dmConfig?.systemPrompt) {
+      systemPrompts.push(dmConfig.systemPrompt);
     }
   }
 
@@ -336,9 +364,10 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
     const errMsg = err instanceof Error ? err.message : String(err);
     log?.error?.(`[DingTalk][Streaming] Gateway error: ${errMsg}`);
 
+    const errTemplate = errorTemplate(errMsg, config.templates);
     await sendDingTalkTextMessage({
       sessionWebhook,
-      text: `抱歉，处理请求时出错: ${errMsg}`,
+      text: errTemplate.text,
       atUserId: !isDirect ? senderId : undefined,
       client,
     });

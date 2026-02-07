@@ -52,8 +52,33 @@ const ChannelHeartbeatVisibilitySchema = z
 // AI Card streaming mode: enabled (default) = use AI Card, disabled = use regular messages
 const AICardModeSchema = z.enum(["enabled", "disabled"]).optional();
 
+// Custom command action types: reply = static response, system-prompt = override prompt, new-session = reset session
+const DingTalkCommandActionSchema = z.enum(["reply", "system-prompt", "new-session"]);
+
+export const DingTalkCommandSchema = z
+  .object({
+    description: z.string().optional(),
+    action: DingTalkCommandActionSchema,
+    response: z.string().optional(),
+    systemPrompt: z.string().optional(),
+  })
+  .strict();
+
 // Group session scope: per-group (default) = shared session per group, per-user = isolated session per user in group
 const GroupSessionScopeSchema = z.enum(["per-group", "per-user"]).optional();
+
+// Message templates for standardized DingTalk-optimized rendering
+export const DingTalkTemplatesSchema = z
+  .object({
+    thinking: z.object({ text: z.string().optional(), enabled: z.boolean().optional() }).strict().optional(),
+    accessDenied: z.object({ text: z.string().optional() }).strict().optional(),
+    groupAccessDenied: z.object({ text: z.string().optional() }).strict().optional(),
+    newSession: z.object({ text: z.string().optional() }).strict().optional(),
+    error: z.object({ text: z.string().optional() }).strict().optional(),
+    welcome: z.object({ text: z.string().optional(), enabled: z.boolean().optional(), title: z.string().optional() }).strict().optional(),
+  })
+  .strict()
+  .optional();
 
 // ============ Per-Account Config Schema ============
 
@@ -82,6 +107,8 @@ export const DingTalkAccountConfigSchema = z
     gatewayPassword: z.string().optional(),
     gatewayPort: z.number().int().positive().optional(),
     systemPrompt: z.string().optional(),
+    commands: z.record(z.string(), DingTalkCommandSchema).optional(),
+    templates: DingTalkTemplatesSchema,
   })
   .strict();
 
@@ -135,6 +162,10 @@ export const DingTalkConfigSchema = z
     // Media options
     enableMediaUpload: z.boolean().optional().default(true), // Enable image post-processing upload
     systemPrompt: z.string().optional(), // Custom system prompt
+    // Custom commands
+    commands: z.record(z.string(), DingTalkCommandSchema).optional(), // User-defined slash commands
+    // Message templates
+    templates: DingTalkTemplatesSchema, // Customize standard message text
     // Multi-account support
     accounts: z.record(z.string(), DingTalkAccountConfigSchema).optional(),
   })

@@ -20,7 +20,9 @@ import { downloadMediaDingTalk } from "./media.js";
 import { sendDingTalkTextMessage } from "./send.js";
 import { safeParseRichText, extractRichTextContent, extractRichTextDownloadCodes } from "./richtext.js";
 import { registerPeerId } from "./peer-id-registry.js";
-import { trackGroupMember } from "./group-members.js";
+import { trackGroupMember, getGroupMemberCount } from "./group-members.js";
+import { executeCommand } from "./commands.js";
+import { thinkingTemplate, thinkingEnabled, accessDeniedTemplate, groupAccessDeniedTemplate } from "./templates.js";
 
 export function parseDingTalkMessage(message: DingTalkIncomingMessage): DingTalkMessageContext {
   const rawContent = parseMessageContent(message);
@@ -73,11 +75,13 @@ export async function handleDingTalkMessage(params: {
   );
 
   let groupSystemPrompt: string | undefined;
+  let groupSkills: string[] = [];
 
   if (isGroup) {
     const groupPolicy = accountCfg?.groupPolicy ?? "open";
     const groupAllowFrom = accountCfg?.groupAllowFrom ?? [];
     const groupConfig = resolveDingTalkGroupConfig({ cfg: accountCfg, groupId: ctx.conversationId });
+    groupSkills = groupConfig?.skills ?? [];
 
     groupSystemPrompt = groupConfig?.systemPrompt
       ?? resolveDingTalkGroupConfig({ cfg: accountCfg, groupId: "*" })?.systemPrompt;
@@ -94,9 +98,10 @@ export async function handleDingTalkMessage(params: {
       log(`dingtalk: sender ${ctx.senderId} not in group allowlist`);
       if (groupPolicy === "allowlist") {
         try {
+          const denied = groupAccessDeniedTemplate(ctx.senderId, accountCfg?.templates);
           await sendDingTalkTextMessage({
             sessionWebhook: ctx.sessionWebhook,
-            text: `⛔ 群组访问受限\n\n您的用户ID: \`${ctx.senderId}\`\n\n请联系管理员将此ID添加到群组允许列表中。`,
+            text: denied.text,
             client,
           });
         } catch {
@@ -122,9 +127,10 @@ export async function handleDingTalkMessage(params: {
       if (!match.allowed) {
         log(`dingtalk: sender ${ctx.senderId} not in DM allowlist`);
         try {
+          const denied = accessDeniedTemplate(ctx.senderId, accountCfg?.templates);
           await sendDingTalkTextMessage({
             sessionWebhook: ctx.sessionWebhook,
-            text: `⛔ 访问受限\n\n您的用户ID: \`${ctx.senderId}\`\n\n请联系管理员将此ID添加到允许列表中。`,
+            text: denied.text,
             client,
           });
         } catch {
@@ -135,12 +141,40 @@ export async function handleDingTalkMessage(params: {
     }
   }
 
-  // Send thinking indicator before dispatching to agent
-  if (accountCfg?.showThinking !== false) {
+  // Check for commands before dispatching to agent
+  const commandResult = executeCommand({
+    text: ctx.content,
+    config: accountCfg,
+    senderId: ctx.senderId,
+    senderName: ctx.senderNick ?? ctx.senderId,
+    sessionIdentifier: isGroup
+      ? (accountCfg?.groupSessionScope === "per-user" ? `${ctx.conversationId}:${ctx.senderId}` : ctx.conversationId)
+      : ctx.senderId,
+    sessionTimeout: accountCfg?.sessionTimeout,
+    log: { info: log, warn: log, error },
+  });
+
+  if (commandResult.handled) {
     try {
       await sendDingTalkTextMessage({
         sessionWebhook: ctx.sessionWebhook,
-        text: "🤔 思考中...",
+        text: commandResult.response,
+        client,
+      });
+    } catch {
+      // Non-fatal: command response is best-effort
+    }
+    log(`dingtalk: command handled: ${ctx.content.trim().slice(0, 30)}`);
+    return;
+  }
+
+  // Send thinking indicator before dispatching to agent
+  if (accountCfg?.showThinking !== false && thinkingEnabled(accountCfg?.templates)) {
+    try {
+      const thinking = thinkingTemplate(accountCfg?.templates);
+      await sendDingTalkTextMessage({
+        sessionWebhook: ctx.sessionWebhook,
+        text: thinking.text,
         client,
       });
     } catch {
@@ -206,6 +240,26 @@ export async function handleDingTalkMessage(params: {
     // Embed DingTalk conversation context for agent awareness
     if (isGroup && groupSystemPrompt) {
       combinedBody = `[群组指令] ${groupSystemPrompt}\n\n${combinedBody}`;
+    }
+
+    // Inject per-DM system prompt for direct messages
+    if (!isGroup) {
+      const dmConfig = accountCfg?.dms?.[ctx.senderId];
+      const dmSystemPrompt = dmConfig?.systemPrompt;
+      if (dmSystemPrompt) {
+        combinedBody = `[DM指令] ${dmSystemPrompt}\n\n${combinedBody}`;
+      }
+    }
+
+    // Inject group skills list for agent awareness
+    if (isGroup && groupSkills.length > 0) {
+      combinedBody = `[可用技能] ${groupSkills.join(", ")}\n\n${combinedBody}`;
+    }
+
+    // Inject DingTalk context metadata for agent awareness
+    const contextMeta = buildContextMetadata(ctx, isGroup);
+    if (contextMeta) {
+      combinedBody = `${contextMeta}\n\n${combinedBody}`;
     }
 
     const historyKey = isGroup ? ctx.conversationId : undefined;
@@ -434,6 +488,25 @@ function buildDingTalkMediaPayload(
     MediaUrls: mediaPaths.length > 0 ? mediaPaths : undefined,
     MediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
   };
+}
+
+function buildContextMetadata(ctx: DingTalkMessageContext, isGroup: boolean): string {
+  const parts: string[] = [];
+  parts.push(`chatType=${ctx.chatType}`);
+  parts.push(`sender=${ctx.senderNick ?? ctx.senderId} (${ctx.senderId})`);
+  if (ctx.isAdmin) {
+    parts.push("isAdmin=true");
+  }
+  if (ctx.mentionedBot) {
+    parts.push("wasMentioned=true");
+  }
+  if (isGroup) {
+    const memberCount = getGroupMemberCount(ctx.conversationId);
+    if (memberCount > 0) {
+      parts.push(`knownGroupMembers=${memberCount}`);
+    }
+  }
+  return `[DingTalk Context] ${parts.join(", ")}`;
 }
 
 function describeMediaMessage(message: DingTalkIncomingMessage): string {

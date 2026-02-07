@@ -1,8 +1,10 @@
-import type { DingTalkConfigSchema, DingTalkGroupSchema, DingTalkAccountConfigSchema, z } from "./config-schema.js";
+import type { DingTalkConfigSchema, DingTalkGroupSchema, DingTalkAccountConfigSchema, DingTalkCommandSchema, DingTalkTemplatesSchema, z } from "./config-schema.js";
 
 export type DingTalkConfig = z.infer<typeof DingTalkConfigSchema>;
 export type DingTalkGroupConfig = z.infer<typeof DingTalkGroupSchema>;
 export type DingTalkAccountConfig = z.infer<typeof DingTalkAccountConfigSchema>;
+export type DingTalkCommand = z.infer<typeof DingTalkCommandSchema>;
+export type DingTalkTemplates = z.infer<typeof DingTalkTemplatesSchema>;
 
 export type DingTalkConnectionMode = "stream" | "webhook";
 
