@@ -2,8 +2,8 @@ import type { DingTalkConfig, DingTalkProbeResult } from "./types.js";
 import { createDingTalkClient } from "./client.js";
 import { resolveDingTalkCredentials } from "./accounts.js";
 
-export async function probeDingTalk(cfg?: DingTalkConfig): Promise<DingTalkProbeResult> {
-  const creds = resolveDingTalkCredentials(cfg);
+export async function probeDingTalk(cfg?: DingTalkConfig, accountId?: string): Promise<DingTalkProbeResult> {
+  const creds = resolveDingTalkCredentials(cfg, accountId);
   if (!creds) {
     return {
       ok: false,
@@ -12,7 +12,7 @@ export async function probeDingTalk(cfg?: DingTalkConfig): Promise<DingTalkProbe
   }
 
   try {
-    const client = createDingTalkClient(cfg!);
+    const client = createDingTalkClient(cfg!, accountId);
 
     // Try to get access token as a connectivity test
     const accessToken = await client.getAccessToken();

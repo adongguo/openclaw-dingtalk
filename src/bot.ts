@@ -9,6 +9,7 @@ import {
 } from "openclaw/plugin-sdk";
 import type { DingTalkConfig, DingTalkMessageContext, DingTalkMediaInfo, DingTalkIncomingMessage } from "./types.js";
 import { getDingTalkRuntime } from "./runtime.js";
+import { resolveDingTalkAccountConfig } from "./accounts.js";
 import {
   resolveDingTalkGroupConfig,
   resolveDingTalkAllowlistMatch,
@@ -50,9 +51,11 @@ export async function handleDingTalkMessage(params: {
   runtime?: RuntimeEnv;
   chatHistories?: Map<string, HistoryEntry[]>;
   client?: DWClient;
+  accountId?: string;
 }): Promise<void> {
-  const { cfg, message, runtime, chatHistories, client } = params;
+  const { cfg, message, runtime, chatHistories, client, accountId } = params;
   const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+  const accountCfg = resolveDingTalkAccountConfig(dingtalkCfg, accountId);
   const log = runtime?.log ?? console.log;
   const error = runtime?.error ?? console.error;
 
@@ -66,18 +69,18 @@ export async function handleDingTalkMessage(params: {
 
   const historyLimit = Math.max(
     0,
-    dingtalkCfg?.historyLimit ?? cfg.messages?.groupChat?.historyLimit ?? DEFAULT_GROUP_HISTORY_LIMIT,
+    accountCfg?.historyLimit ?? cfg.messages?.groupChat?.historyLimit ?? DEFAULT_GROUP_HISTORY_LIMIT,
   );
 
   let groupSystemPrompt: string | undefined;
 
   if (isGroup) {
-    const groupPolicy = dingtalkCfg?.groupPolicy ?? "open";
-    const groupAllowFrom = dingtalkCfg?.groupAllowFrom ?? [];
-    const groupConfig = resolveDingTalkGroupConfig({ cfg: dingtalkCfg, groupId: ctx.conversationId });
+    const groupPolicy = accountCfg?.groupPolicy ?? "open";
+    const groupAllowFrom = accountCfg?.groupAllowFrom ?? [];
+    const groupConfig = resolveDingTalkGroupConfig({ cfg: accountCfg, groupId: ctx.conversationId });
 
     groupSystemPrompt = groupConfig?.systemPrompt
-      ?? resolveDingTalkGroupConfig({ cfg: dingtalkCfg, groupId: "*" })?.systemPrompt;
+      ?? resolveDingTalkGroupConfig({ cfg: accountCfg, groupId: "*" })?.systemPrompt;
 
     const senderAllowFrom = groupConfig?.allowFrom ?? groupAllowFrom;
     const allowed = isDingTalkGroupAllowed({
@@ -108,8 +111,8 @@ export async function handleDingTalkMessage(params: {
     // Note: Group messages require @mention to reach the bot - this is a DingTalk platform limitation.
     // The bot only receives messages where it was mentioned, so no additional check is needed here.
   } else {
-    const dmPolicy = dingtalkCfg?.dmPolicy ?? "pairing";
-    const allowFrom = dingtalkCfg?.allowFrom ?? [];
+    const dmPolicy = accountCfg?.dmPolicy ?? "pairing";
+    const allowFrom = accountCfg?.allowFrom ?? [];
 
     if (dmPolicy === "allowlist") {
       const match = resolveDingTalkAllowlistMatch({
@@ -133,7 +136,7 @@ export async function handleDingTalkMessage(params: {
   }
 
   // Send thinking indicator before dispatching to agent
-  if (dingtalkCfg?.showThinking !== false) {
+  if (accountCfg?.showThinking !== false) {
     try {
       await sendDingTalkTextMessage({
         sessionWebhook: ctx.sessionWebhook,
@@ -151,7 +154,7 @@ export async function handleDingTalkMessage(params: {
     const dingtalkFrom = isGroup ? `dingtalk:group:${ctx.conversationId}` : `dingtalk:${ctx.senderId}`;
     const dingtalkTo = isGroup ? `chat:${ctx.conversationId}` : `user:${ctx.senderId}`;
 
-    const groupSessionScope = dingtalkCfg?.groupSessionScope ?? "per-group";
+    const groupSessionScope = accountCfg?.groupSessionScope ?? "per-group";
     const groupPeerId =
       groupSessionScope === "per-user"
         ? `${ctx.conversationId}:${ctx.senderId}`
@@ -177,13 +180,14 @@ export async function handleDingTalkMessage(params: {
     });
 
     // Resolve media from message
-    const mediaMaxBytes = (dingtalkCfg?.mediaMaxMb ?? 30) * 1024 * 1024; // 30MB default
+    const mediaMaxBytes = (accountCfg?.mediaMaxMb ?? 30) * 1024 * 1024; // 30MB default
     const mediaList = await resolveDingTalkMediaList({
       cfg,
       message,
       maxBytes: mediaMaxBytes,
       log,
       client,
+      accountId,
     });
     const mediaPayload = buildDingTalkMediaPayload(mediaList);
 
@@ -253,6 +257,7 @@ export async function handleDingTalkMessage(params: {
       conversationId: ctx.conversationId,
       sessionWebhook: ctx.sessionWebhook,
       client,
+      accountId,
     });
 
     log(`dingtalk: dispatching to agent (session=${route.sessionKey})`);
@@ -331,8 +336,9 @@ async function resolveDingTalkMediaList(params: {
   maxBytes: number;
   log?: (msg: string) => void;
   client?: DWClient;
+  accountId?: string;
 }): Promise<DingTalkMediaInfo[]> {
-  const { cfg, message, maxBytes, log, client } = params;
+  const { cfg, message, maxBytes, log, client, accountId } = params;
 
   // Collect downloadCodes to process
   const downloadEntries: Array<{ code: string; placeholder: string }> = [];
@@ -374,6 +380,7 @@ async function resolveDingTalkMediaList(params: {
         downloadCode: entry.code,
         robotCode: message.robotCode,
         client,
+        accountId,
       });
 
       if (!result) {

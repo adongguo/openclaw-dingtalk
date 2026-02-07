@@ -1,7 +1,13 @@
 import type { ChannelPlugin, ClawdbotConfig } from "openclaw/plugin-sdk";
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk";
 import type { ResolvedDingTalkAccount, DingTalkConfig } from "./types.js";
-import { resolveDingTalkAccount, resolveDingTalkCredentials } from "./accounts.js";
+import {
+  resolveDingTalkAccount,
+  resolveDingTalkCredentials,
+  resolveDingTalkAccountConfig,
+  listDingTalkAccountIds,
+  resolveDefaultDingTalkAccountId,
+} from "./accounts.js";
 import { dingtalkOutbound } from "./outbound.js";
 import { probeDingTalk } from "./probe.js";
 import { resolveDingTalkGroupToolPolicy } from "./policy.js";
@@ -33,8 +39,11 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
   pairing: {
     idLabel: "dingtalkUserId",
     normalizeAllowEntry: (entry) => entry.replace(/^(dingtalk|user|staff):/i, ""),
-    notifyApproval: async ({ cfg, id }) => {
-      const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+    notifyApproval: async ({ cfg, id, accountId }) => {
+      const dingtalkCfg = resolveDingTalkAccountConfig(
+        cfg.channels?.dingtalk as DingTalkConfig | undefined,
+        accountId,
+      );
       if (!dingtalkCfg?.appKey || !dingtalkCfg?.appSecret) {
         return;
       }
@@ -94,24 +103,68 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
         mediaMaxMb: { type: "number", minimum: 0 },
         renderMode: { type: "string", enum: ["auto", "raw", "card"] },
         cooldownMs: { type: "integer", minimum: 0 },
+        accounts: { type: "object", additionalProperties: { type: "object" } },
       },
     },
   },
   config: {
-    listAccountIds: () => [DEFAULT_ACCOUNT_ID],
-    resolveAccount: (cfg) => resolveDingTalkAccount({ cfg }),
-    defaultAccountId: () => DEFAULT_ACCOUNT_ID,
-    setAccountEnabled: ({ cfg, enabled }) => ({
-      ...cfg,
-      channels: {
-        ...cfg.channels,
-        dingtalk: {
-          ...cfg.channels?.dingtalk,
-          enabled,
+    listAccountIds: (cfg) => listDingTalkAccountIds(cfg),
+    resolveAccount: (cfg, accountId) => resolveDingTalkAccount({ cfg, accountId }),
+    defaultAccountId: (cfg) => resolveDefaultDingTalkAccountId(cfg),
+    setAccountEnabled: ({ cfg, accountId, enabled }) => {
+      const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+      const id = accountId ?? DEFAULT_ACCOUNT_ID;
+
+      // Multi-account: update specific account
+      if (dingtalkCfg?.accounts?.[id]) {
+        return {
+          ...cfg,
+          channels: {
+            ...cfg.channels,
+            dingtalk: {
+              ...dingtalkCfg,
+              accounts: {
+                ...dingtalkCfg.accounts,
+                [id]: { ...dingtalkCfg.accounts[id], enabled },
+              },
+            },
+          },
+        };
+      }
+
+      // Legacy: update root-level enabled
+      return {
+        ...cfg,
+        channels: {
+          ...cfg.channels,
+          dingtalk: {
+            ...cfg.channels?.dingtalk,
+            enabled,
+          },
         },
-      },
-    }),
-    deleteAccount: ({ cfg }) => {
+      };
+    },
+    deleteAccount: ({ cfg, accountId }) => {
+      const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+      const id = accountId ?? DEFAULT_ACCOUNT_ID;
+
+      // Multi-account: delete specific account from accounts map
+      if (dingtalkCfg?.accounts?.[id]) {
+        const { [id]: _removed, ...remainingAccounts } = dingtalkCfg.accounts;
+        const hasRemaining = Object.keys(remainingAccounts).length > 0;
+        return {
+          ...cfg,
+          channels: {
+            ...cfg.channels,
+            dingtalk: {
+              ...dingtalkCfg,
+              accounts: hasRemaining ? remainingAccounts : undefined,
+            },
+          },
+        };
+      }
+
+      // Legacy: remove entire dingtalk config
       const next = { ...cfg } as ClawdbotConfig;
       const nextChannels = { ...cfg.channels };
       delete (nextChannels as Record<string, unknown>).dingtalk;
@@ -122,15 +175,21 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
       }
       return next;
     },
-    isConfigured: (_account, cfg) =>
-      Boolean(resolveDingTalkCredentials(cfg.channels?.dingtalk as DingTalkConfig | undefined)),
+    isConfigured: (_account, cfg) => {
+      const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+      const accountId = _account?.accountId;
+      return Boolean(resolveDingTalkCredentials(dingtalkCfg, accountId));
+    },
     describeAccount: (account) => ({
       accountId: account.accountId,
       enabled: account.enabled,
       configured: account.configured,
     }),
-    resolveAllowFrom: ({ cfg }) =>
-      (cfg.channels?.dingtalk as DingTalkConfig | undefined)?.allowFrom ?? [],
+    resolveAllowFrom: ({ cfg, accountId }) => {
+      const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+      const resolved = resolveDingTalkAccountConfig(dingtalkCfg, accountId);
+      return resolved?.allowFrom ?? [];
+    },
     formatAllowFrom: ({ allowFrom }) =>
       allowFrom
         .map((entry) => String(entry).trim())
@@ -140,16 +199,27 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
   security: {
     collectWarnings: ({ cfg }) => {
       const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+      const warnings: string[] = [];
       const defaultGroupPolicy = (cfg.channels as Record<string, { groupPolicy?: string }> | undefined)?.defaults?.groupPolicy;
-      const groupPolicy = dingtalkCfg?.groupPolicy ?? defaultGroupPolicy ?? "allowlist";
-      if (groupPolicy !== "open") return [];
-      return [
-        `- DingTalk groups: groupPolicy="open" allows any member to trigger (mention-gated). Set channels.dingtalk.groupPolicy="allowlist" + channels.dingtalk.groupAllowFrom to restrict senders.`,
-      ];
+
+      // Check all accounts (or root-level for legacy)
+      const accountIds = listDingTalkAccountIds(cfg);
+      for (const accountId of accountIds) {
+        const resolved = resolveDingTalkAccountConfig(dingtalkCfg, accountId);
+        const groupPolicy = resolved?.groupPolicy ?? defaultGroupPolicy ?? "allowlist";
+        if (groupPolicy === "open") {
+          const label = accountId === DEFAULT_ACCOUNT_ID ? "" : ` (account: ${accountId})`;
+          warnings.push(
+            `- DingTalk groups${label}: groupPolicy="open" allows any member to trigger (mention-gated). Set groupPolicy="allowlist" + groupAllowFrom to restrict senders.`,
+          );
+        }
+      }
+
+      return warnings;
     },
   },
   setup: {
-    resolveAccountId: () => DEFAULT_ACCOUNT_ID,
+    resolveAccountId: (cfg) => resolveDefaultDingTalkAccountId(cfg),
     applyAccountConfig: ({ cfg }) => ({
       ...cfg,
       channels: {
@@ -200,8 +270,11 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
       probe: snapshot.probe,
       lastProbeAt: snapshot.lastProbeAt ?? null,
     }),
-    probeAccount: async ({ cfg }) =>
-      await probeDingTalk(cfg.channels?.dingtalk as DingTalkConfig | undefined),
+    probeAccount: async ({ cfg, accountId }) => {
+      const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+      const resolved = resolveDingTalkAccountConfig(dingtalkCfg, accountId);
+      return await probeDingTalk(resolved, accountId);
+    },
     buildAccountSnapshot: ({ account, runtime, probe }) => ({
       accountId: account.accountId,
       enabled: account.enabled,
@@ -217,7 +290,10 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
   gateway: {
     startAccount: async (ctx) => {
       const { monitorDingTalkProvider } = await import("./monitor.js");
-      const dingtalkCfg = ctx.cfg.channels?.dingtalk as DingTalkConfig | undefined;
+      const dingtalkCfg = resolveDingTalkAccountConfig(
+        ctx.cfg.channels?.dingtalk as DingTalkConfig | undefined,
+        ctx.accountId,
+      );
       const port = dingtalkCfg?.webhookPort ?? null;
       ctx.setStatus({ accountId: ctx.accountId, port });
       ctx.log?.info(`starting dingtalk provider (mode: ${dingtalkCfg?.connectionMode ?? "stream"})`);

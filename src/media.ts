@@ -1,6 +1,7 @@
 import type { ClawdbotConfig } from "openclaw/plugin-sdk";
 import type { DWClient } from "dingtalk-stream";
 import type { DingTalkConfig } from "./types.js";
+import { resolveDingTalkAccountConfig } from "./accounts.js";
 import fs from "fs";
 import path from "path";
 
@@ -525,12 +526,14 @@ export async function downloadMediaDingTalk(params: {
   downloadCode: string;
   robotCode?: string;
   client?: DWClient;
+  accountId?: string;
 }): Promise<DownloadMediaResult | null> {
-  const { cfg, downloadCode, robotCode, client } = params;
-  const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
-  if (!dingtalkCfg) {
+  const { cfg, downloadCode, robotCode, client, accountId } = params;
+  const rawCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+  if (!rawCfg) {
     throw new Error("DingTalk channel not configured");
   }
+  const dingtalkCfg = resolveDingTalkAccountConfig(rawCfg, accountId);
 
   if (!client) {
     // Cannot download without client for access token
@@ -594,12 +597,14 @@ export async function uploadMediaDingTalk(params: {
   fileName: string;
   mediaType: "image" | "file" | "voice";
   client?: DWClient;
+  accountId?: string;
 }): Promise<UploadMediaResult | null> {
-  const { cfg, buffer, fileName, mediaType, client } = params;
-  const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
-  if (!dingtalkCfg) {
+  const { cfg, buffer, fileName, mediaType, client, accountId } = params;
+  const rawCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+  if (!rawCfg) {
     throw new Error("DingTalk channel not configured");
   }
+  const dingtalkCfg = resolveDingTalkAccountConfig(rawCfg, accountId);
 
   if (!client) {
     return null;

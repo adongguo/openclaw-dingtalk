@@ -1,6 +1,7 @@
-import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk";
+import type { ChannelOutboundAdapter, ClawdbotConfig } from "openclaw/plugin-sdk";
 import type { DingTalkConfig } from "./types.js";
 import { getDingTalkRuntime } from "./runtime.js";
+import { resolveDingTalkAccountConfig } from "./accounts.js";
 import { sendMessageDingTalk } from "./send.js";
 import { sendMediaDingTalk } from "./media.js";
 import {
@@ -31,13 +32,13 @@ export const dingtalkOutbound: ChannelOutboundAdapter = {
       return { channel: "dingtalk", conversationId: result.conversationId, messageId: result.processQueryKey || "" };
     }
 
-    const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
-    if (!dingtalkCfg?.appKey || !dingtalkCfg?.appSecret) {
+    const resolvedCfg = resolveFirstConfiguredAccount(cfg);
+    if (!resolvedCfg) {
       throw new Error("[dingtalk] appKey/appSecret required for proactive send");
     }
 
     const openAPITarget: OpenAPISendTarget = { kind: target.kind, id: target.id };
-    const result = await sendTextViaOpenAPI({ config: dingtalkCfg, target: openAPITarget, content: text });
+    const result = await sendTextViaOpenAPI({ config: resolvedCfg, target: openAPITarget, content: text });
     return { channel: "dingtalk", conversationId: "", messageId: result.processQueryKey };
   },
   sendMedia: async ({ cfg, to, text, mediaUrl }) => {
@@ -64,31 +65,30 @@ export const dingtalkOutbound: ChannelOutboundAdapter = {
       return { channel: "dingtalk", conversationId: result.conversationId, messageId: result.processQueryKey || "" };
     }
 
-    const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
-    if (!dingtalkCfg?.appKey || !dingtalkCfg?.appSecret) {
+    const resolvedCfg = resolveFirstConfiguredAccount(cfg);
+    if (!resolvedCfg) {
       throw new Error("[dingtalk] appKey/appSecret required for proactive send");
     }
 
     const openAPITarget: OpenAPISendTarget = { kind: target.kind, id: target.id };
 
     if (text?.trim()) {
-      await sendTextViaOpenAPI({ config: dingtalkCfg, target: openAPITarget, content: text });
+      await sendTextViaOpenAPI({ config: resolvedCfg, target: openAPITarget, content: text });
     }
 
     if (mediaUrl) {
       try {
-        const result = await sendMediaViaOpenAPIWithUpload(dingtalkCfg, openAPITarget, mediaUrl);
+        const result = await sendMediaViaOpenAPIWithUpload(resolvedCfg, openAPITarget, mediaUrl);
         return { channel: "dingtalk", conversationId: "", messageId: result };
-      } catch (err) {
-        console.error(`[dingtalk] sendMediaViaOpenAPIWithUpload failed:`, err);
+      } catch {
         const fallbackText = `📎 ${mediaUrl}`;
-        const result = await sendTextViaOpenAPI({ config: dingtalkCfg, target: openAPITarget, content: fallbackText });
+        const result = await sendTextViaOpenAPI({ config: resolvedCfg, target: openAPITarget, content: fallbackText });
         return { channel: "dingtalk", conversationId: "", messageId: result.processQueryKey };
       }
     }
 
     if (!text?.trim()) {
-      const result = await sendTextViaOpenAPI({ config: dingtalkCfg, target: openAPITarget, content: text ?? "" });
+      const result = await sendTextViaOpenAPI({ config: resolvedCfg, target: openAPITarget, content: text ?? "" });
       return { channel: "dingtalk", conversationId: "", messageId: result.processQueryKey };
     }
 
@@ -97,6 +97,32 @@ export const dingtalkOutbound: ChannelOutboundAdapter = {
 };
 
 // ============ Private Helpers ============
+
+/**
+ * Resolve the first account with valid credentials for proactive sends.
+ * Checks multi-account `accounts` map first, then falls back to root-level credentials.
+ */
+function resolveFirstConfiguredAccount(cfg: ClawdbotConfig): DingTalkConfig | null {
+  const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+  if (!dingtalkCfg) return null;
+
+  // Check accounts map first
+  if (dingtalkCfg.accounts) {
+    for (const accountId of Object.keys(dingtalkCfg.accounts)) {
+      const resolved = resolveDingTalkAccountConfig(dingtalkCfg, accountId);
+      if (resolved?.appKey && resolved?.appSecret) {
+        return resolved;
+      }
+    }
+  }
+
+  // Fall back to root-level credentials
+  if (dingtalkCfg.appKey && dingtalkCfg.appSecret) {
+    return dingtalkCfg;
+  }
+
+  return null;
+}
 
 function parseOutboundTarget(to: string): OutboundTarget {
   if (to.startsWith("https://") || to.startsWith("http://")) {
@@ -160,10 +186,8 @@ async function sendMediaViaOpenAPIWithUpload(
       try {
         const result = await sendImageViaOpenAPI({ config, target, photoURL: mediaId });
         return result.processQueryKey;
-      } catch (err) {
-        // Fall back to sending as file card (reuse already-uploaded mediaId)
-        const errMsg = err instanceof Error ? err.message : String(err);
-        console.warn(`[dingtalk] sampleImageMsg failed, falling back to file card: ${errMsg}`);
+      } catch {
+        // sampleImageMsg failed, falling back to file card
         const fileType = ext.slice(1) || "jpg";
         const result = await sendFileViaOpenAPI({ config, target, mediaId, fileName, fileType });
         return result.processQueryKey;

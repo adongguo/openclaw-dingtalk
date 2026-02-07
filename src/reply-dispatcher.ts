@@ -10,6 +10,7 @@ import {
 import { getDingTalkRuntime } from "./runtime.js";
 import { sendMessageDingTalk, sendActionCardDingTalk } from "./send.js";
 import type { DingTalkConfig } from "./types.js";
+import { resolveDingTalkAccountConfig } from "./accounts.js";
 import {
   addTypingIndicator,
   removeTypingIndicator,
@@ -38,6 +39,7 @@ export type CreateDingTalkReplyDispatcherParams = {
   conversationId: string;
   sessionWebhook: string;
   client?: DWClient;
+  accountId?: string;
 };
 
 export function createDingTalkReplyDispatcher(params: CreateDingTalkReplyDispatcherParams) {
@@ -120,7 +122,10 @@ export function createDingTalkReplyDispatcher(params: CreateDingTalkReplyDispatc
         }
 
         // Process local images: upload to DingTalk and replace paths with media_id
-        const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+        const dingtalkCfg = resolveDingTalkAccountConfig(
+          cfg.channels?.dingtalk as DingTalkConfig | undefined,
+          params.accountId,
+        );
         if (dingtalkCfg && dingtalkCfg.enableMediaUpload !== false) {
           try {
             if (cachedOapiToken === undefined) {

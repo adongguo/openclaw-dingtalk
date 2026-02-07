@@ -7,6 +7,7 @@
 
 import type { DWClient } from "dingtalk-stream";
 import type { DingTalkConfig, DingTalkIncomingMessage } from "./types.js";
+import { resolveDingTalkAccountConfig } from "./accounts.js";
 import { createAICard, streamAICard, finishAICard, failAICard } from "./ai-card.js";
 import { isNewSessionCommand, getSessionKey, DEFAULT_SESSION_TIMEOUT } from "./session.js";
 import { streamFromGateway } from "./gateway-stream.js";
@@ -28,6 +29,7 @@ export interface StreamingHandlerParams {
   sessionWebhook: string;
   client?: DWClient;
   log?: Logger;
+  accountId?: string;
 }
 
 interface ExtractedContent {
@@ -53,7 +55,9 @@ interface ExtractedContent {
  * 8. Fall back to regular message if AI Card fails
  */
 export async function handleDingTalkStreamingMessage(params: StreamingHandlerParams): Promise<void> {
-  const { config, data, sessionWebhook, client, log } = params;
+  const { config: rawConfig, data, sessionWebhook, client, log, accountId } = params;
+  // Resolve account-specific config (merges account overrides with shared defaults)
+  const config = accountId ? resolveDingTalkAccountConfig(rawConfig, accountId) : rawConfig;
 
   // Extract message content
   const content = extractMessageContent(data);
@@ -203,6 +207,7 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
         senderId: senderId,
       },
       log,
+      accountId,
     );
 
     if (card) {

@@ -55,6 +55,36 @@ const AICardModeSchema = z.enum(["enabled", "disabled"]).optional();
 // Group session scope: per-group (default) = shared session per group, per-user = isolated session per user in group
 const GroupSessionScopeSchema = z.enum(["per-group", "per-user"]).optional();
 
+// ============ Per-Account Config Schema ============
+
+/**
+ * Per-account configuration schema.
+ * Each account can override shared defaults with its own credentials and settings.
+ */
+export const DingTalkAccountConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    appKey: z.string().optional(),
+    appSecret: z.string().optional(),
+    robotCode: z.string().optional(),
+    connectionMode: DingTalkConnectionModeSchema.optional(),
+    dmPolicy: DmPolicySchema.optional(),
+    allowFrom: z.array(z.union([z.string(), z.number()])).optional(),
+    groupPolicy: GroupPolicySchema.optional(),
+    groupAllowFrom: z.array(z.union([z.string(), z.number()])).optional(),
+    groups: z.record(z.string(), z.lazy(() => DingTalkGroupSchema).optional()).optional(),
+    renderMode: RenderModeSchema,
+    aiCardMode: AICardModeSchema,
+    cooldownMs: z.number().int().positive().optional(),
+    showThinking: z.boolean().optional(),
+    groupSessionScope: GroupSessionScopeSchema,
+    gatewayToken: z.string().optional(),
+    gatewayPassword: z.string().optional(),
+    gatewayPort: z.number().int().positive().optional(),
+    systemPrompt: z.string().optional(),
+  })
+  .strict();
+
 export const DingTalkGroupSchema = z
   .object({
     tools: ToolPolicySchema,
@@ -105,9 +135,16 @@ export const DingTalkConfigSchema = z
     // Media options
     enableMediaUpload: z.boolean().optional().default(true), // Enable image post-processing upload
     systemPrompt: z.string().optional(), // Custom system prompt
+    // Multi-account support
+    accounts: z.record(z.string(), DingTalkAccountConfigSchema).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
+    // Skip root-level dmPolicy validation when accounts are configured
+    // (each account has its own dmPolicy)
+    if (value.accounts && Object.keys(value.accounts).length > 0) {
+      return;
+    }
     if (value.dmPolicy === "open") {
       const allowFrom = value.allowFrom ?? [];
       const hasWildcard = allowFrom.some((entry) => String(entry).trim() === "*");

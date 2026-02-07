@@ -6,6 +6,7 @@
  */
 
 import type { DingTalkConfig, DingTalkIncomingMessage } from "./types.js";
+import { resolveDingTalkAccountConfig } from "./accounts.js";
 
 // ============ Constants ============
 
@@ -60,27 +61,33 @@ interface Logger {
 const cardCache = new Map<string, CachedAICard>();
 const CARD_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour for terminal states
 
-// ============ Access Token Cache ============
+// ============ Access Token Cache (per appKey) ============
 
-let accessToken: string | null = null;
-let accessTokenExpiry = 0;
+const tokenCache = new Map<string, { token: string; expiry: number }>();
 
 /**
- * Get access token for DingTalk API, with caching.
+ * Get access token for DingTalk API, with per-appKey caching.
+ * Optionally resolves credentials from accountId if provided.
  */
-export async function getAccessToken(config: DingTalkConfig): Promise<string> {
+export async function getAccessToken(config: DingTalkConfig, accountId?: string): Promise<string> {
+  const resolved = accountId ? resolveDingTalkAccountConfig(config, accountId) : config;
+  const appKey = resolved.appKey;
+  const appSecret = resolved.appSecret;
+
+  if (!appKey || !appSecret) {
+    throw new Error(`Missing appKey/appSecret for access token${accountId ? ` (account: ${accountId})` : ""}`);
+  }
+
   const now = Date.now();
-  if (accessToken && accessTokenExpiry > now + 60_000) {
-    return accessToken;
+  const cached = tokenCache.get(appKey);
+  if (cached && cached.expiry > now + 60_000) {
+    return cached.token;
   }
 
   const response = await fetch(`${DINGTALK_API}/v1.0/oauth2/accessToken`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      appKey: config.appKey,
-      appSecret: config.appSecret,
-    }),
+    body: JSON.stringify({ appKey, appSecret }),
   });
 
   if (!response.ok) {
@@ -89,17 +96,19 @@ export async function getAccessToken(config: DingTalkConfig): Promise<string> {
   }
 
   const data = (await response.json()) as { accessToken: string; expireIn: number };
-  accessToken = data.accessToken;
-  accessTokenExpiry = now + data.expireIn * 1000;
-  return accessToken;
+  tokenCache.set(appKey, { token: data.accessToken, expiry: now + data.expireIn * 1000 });
+  return data.accessToken;
 }
 
 /**
- * Clear the access token cache.
+ * Clear the access token cache for a specific appKey or all.
  */
-export function clearAccessTokenCache(): void {
-  accessToken = null;
-  accessTokenExpiry = 0;
+export function clearAccessTokenCache(appKey?: string): void {
+  if (appKey) {
+    tokenCache.delete(appKey);
+  } else {
+    tokenCache.clear();
+  }
 }
 
 // ============ AI Card Functions ============
@@ -112,8 +121,9 @@ export async function getOrCreateAICard(
   config: DingTalkConfig,
   data: AICardMessageData,
   log?: Logger,
+  accountId?: string,
 ): Promise<AICardInstance | null> {
-  const cacheKey = buildCardCacheKey(data);
+  const cacheKey = buildCardCacheKey(data, accountId);
   const cached = cardCache.get(cacheKey);
 
   if (cached && (cached.state === "PROCESSING" || cached.state === "INPUTING")) {
@@ -126,7 +136,7 @@ export async function getOrCreateAICard(
     cardCache.delete(cacheKey);
   }
 
-  const card = await createAICard(config, data, log);
+  const card = await createAICard(config, data, log, accountId);
   if (card) {
     cardCache.set(cacheKey, { card, state: "PROCESSING", createdAt: Date.now() });
   }
@@ -160,9 +170,10 @@ export async function createAICard(
   config: DingTalkConfig,
   data: AICardMessageData,
   log?: Logger,
+  accountId?: string,
 ): Promise<AICardInstance | null> {
   try {
-    const token = await getAccessToken(config);
+    const token = await getAccessToken(config, accountId);
     const cardInstanceId = `card_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
     log?.info?.(`[DingTalk][AICard] Creating card outTrackId=${cardInstanceId}`);
@@ -195,6 +206,7 @@ export async function createAICard(
         body: JSON.stringify(createBody),
       },
       log,
+      accountId,
     );
 
     if (!createResp.ok) {
@@ -237,6 +249,7 @@ export async function createAICard(
         body: JSON.stringify(deliverBody),
       },
       log,
+      accountId,
     );
 
     if (!deliverResp.ok) {
@@ -430,11 +443,12 @@ export async function failAICard(card: AICardInstance, errorMessage: string, log
 
 // ============ Private Helpers ============
 
-function buildCardCacheKey(data: AICardMessageData): string {
+function buildCardCacheKey(data: AICardMessageData, accountId?: string): string {
+  const prefix = accountId ? `${accountId}:` : "";
   const isDM = data.conversationType === "1";
   return isDM
-    ? `dm:${data.senderStaffId || data.senderId}`
-    : `group:${data.conversationId}`;
+    ? `${prefix}dm:${data.senderStaffId || data.senderId}`
+    : `${prefix}group:${data.conversationId}`;
 }
 
 function updateCardState(cardInstanceId: string, state: AICardState): void {
@@ -454,13 +468,15 @@ async function fetchWithTokenRefresh(
   url: string,
   options: RequestInit,
   log?: Logger,
+  accountId?: string,
 ): Promise<Response> {
   const response = await fetch(url, options);
 
   if (response.status === 401) {
     log?.warn?.(`[DingTalk][AICard] Got 401, refreshing token and retrying`);
-    clearAccessTokenCache();
-    const newToken = await getAccessToken(config);
+    const resolved = accountId ? resolveDingTalkAccountConfig(config, accountId) : config;
+    clearAccessTokenCache(resolved.appKey);
+    const newToken = await getAccessToken(config, accountId);
 
     const newHeaders = { ...Object.fromEntries(new Headers(options.headers).entries()) };
     newHeaders["x-acs-dingtalk-access-token"] = newToken;
