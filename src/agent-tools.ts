@@ -224,15 +224,18 @@ async function handleMention(
     }
   }
 
-  // Route 1: Target a specific group via OpenAPI
-  if (groupId) {
-    if (!dingtalkConfig) {
-      return "Error: DingTalk config not available. Cannot send via OpenAPI.";
-    }
+  // Resolve sessionWebhook: prefer group-specific cache, fallback to any cached
+  const sessionWebhook = groupId
+    ? getCachedWebhook(groupId) ?? getCachedWebhook()
+    : getCachedWebhook();
+
+  // Route 1: Use webhook (supports real @mention with at field)
+  if (sessionWebhook) {
+    // Webhook is available — use it for real @mention support
+  } else if (groupId && dingtalkConfig) {
+    // Route 2: Fallback to OpenAPI (no real @mention, just text)
     try {
       const { sendViaOpenAPI } = await import("./openapi-send.js");
-      // OpenAPI group messages use sampleText with @mention in content
-      // Note: OpenAPI doesn't have a separate "at" field; @mentions are text-based
       await sendViaOpenAPI({
         config: dingtalkConfig,
         target: { kind: "group", id: groupId },
@@ -240,17 +243,13 @@ async function handleMention(
         msgParam: { content },
       });
 
-      const mentionInfo = atAll ? "@所有人" : userIds?.length ? `@${userIds.join(", @")}` : "无@";
-      return `Message sent to group ${groupId} with ${mentionInfo} (via OpenAPI).`;
+      const mentionInfo = atAll ? "@所有人(文本)" : userIds?.length ? `@${userIds.join(", @")}(文本)` : "无@";
+      return `Message sent to group via OpenAPI. Note: ${mentionInfo} — OpenAPI不支持真实@，需要先在群里发消息给机器人以缓存webhook。`;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return `Failed to send to group: ${msg}`;
     }
-  }
-
-  // Route 2: Use cached sessionWebhook (current conversation)
-  const sessionWebhook = getCachedWebhook();
-  if (!sessionWebhook) {
+  } else {
     return "Error: no cached sessionWebhook and no groupId specified. Either send a message in the target group first, or provide groupId.";
   }
 
