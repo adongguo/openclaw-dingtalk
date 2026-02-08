@@ -89,6 +89,33 @@ export function registerDingTalkTools(api: ClawdbotPluginApi): void {
     },
     handler: handleListGroupMembers,
   });
+
+  registerTool.call(api, {
+    name: "dingtalk_mention",
+    description:
+      "Send a message that @mentions specific users in the current DingTalk group. " +
+      "Use dingtalk_list_group_members first to get user staff IDs.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "Message text to send",
+        },
+        userIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of user staff IDs to @mention",
+        },
+        atAll: {
+          type: "boolean",
+          description: "If true, @mention everyone in the group",
+        },
+      },
+      required: ["text"],
+    },
+    handler: handleMention,
+  });
 }
 
 // ============ Private Functions ============
@@ -165,4 +192,70 @@ async function handleListGroupMembers(
   }
 
   return lines.join("\n");
+}
+
+async function handleMention(
+  params: Record<string, unknown>,
+  ctx: Record<string, unknown>,
+): Promise<string> {
+  const text = params.text as string | undefined;
+  const userIds = params.userIds as string[] | undefined;
+  const atAll = params.atAll as boolean | undefined;
+
+  if (!text) {
+    return "Error: text is required.";
+  }
+
+  const sessionWebhook = ctx.sessionWebhook as string | undefined;
+  if (!sessionWebhook) {
+    return "Error: no active sessionWebhook. This tool can only be used in response to a DingTalk message.";
+  }
+
+  try {
+    const { sendViaWebhook } = await import("./send.js");
+
+    // DingTalk requires BOTH:
+    // 1. @ text in message content
+    // 2. atUserIds in the at field
+    let content = text;
+    const atField: Record<string, unknown> = {};
+
+    if (atAll) {
+      // @所有人 needs the text "@所有人" in content
+      if (!content.includes("@所有人")) {
+        content = `${content} @所有人`;
+      }
+      atField.isAtAll = true;
+    } else if (userIds && userIds.length > 0) {
+      // Add @userId to content for each user (DingTalk will render as @nickname)
+      const atTexts = userIds.map(id => `@${id}`).join(" ");
+      if (!userIds.some(id => content.includes(`@${id}`))) {
+        content = `${content} ${atTexts}`;
+      }
+      atField.atUserIds = userIds;
+      atField.isAtAll = false;
+    }
+
+    const message: Record<string, unknown> = {
+      msgtype: "text",
+      text: { content },
+    };
+
+    if (Object.keys(atField).length > 0) {
+      message.at = atField;
+    }
+
+    await sendViaWebhook({ sessionWebhook, message });
+
+    const mentionInfo = atAll 
+      ? "@所有人" 
+      : userIds && userIds.length > 0 
+        ? `@${userIds.join(", @")}` 
+        : "无@";
+    
+    return `Message sent with ${mentionInfo}.`;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return `Failed to send message: ${msg}`;
+  }
 }
