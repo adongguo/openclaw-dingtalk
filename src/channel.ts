@@ -104,7 +104,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
         textChunkLimit: { type: "integer", minimum: 1 },
         chunkMode: { type: "string", enum: ["length", "newline"] },
         mediaMaxMb: { type: "number", minimum: 0 },
-        renderMode: { type: "string", enum: ["auto", "raw", "card"] },
+        renderMode: { type: "string", enum: ["auto", "raw", "card", "markdown"] },
         cooldownMs: { type: "integer", minimum: 0 },
         accounts: { type: "object", additionalProperties: { type: "object" } },
       },

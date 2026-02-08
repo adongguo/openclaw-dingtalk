@@ -29,8 +29,12 @@ const MarkdownConfigSchema = z
   .strict()
   .optional();
 
-// Message render mode: auto (default) = detect markdown, raw = plain text, card = always action_card
-const RenderModeSchema = z.enum(["auto", "raw", "card"]).optional();
+// Message render mode:
+// - auto (default) = detect markdown features, use card for code/tables/images
+// - raw = plain text only
+// - card = always action_card (better markdown render, but NOT shareable)
+// - markdown = markdown message type (shareable, but limited markdown support)
+const RenderModeSchema = z.enum(["auto", "raw", "card", "markdown"]).optional();
 
 const BlockStreamingCoalesceSchema = z
   .object({

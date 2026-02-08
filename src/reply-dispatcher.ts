@@ -8,7 +8,7 @@ import {
   type ReplyPayload,
 } from "openclaw/plugin-sdk";
 import { getDingTalkRuntime } from "./runtime.js";
-import { sendMessageDingTalk, sendActionCardDingTalk } from "./send.js";
+import { sendMessageDingTalk, sendActionCardDingTalk, sendMarkdownDingTalk } from "./send.js";
 import type { DingTalkConfig } from "./types.js";
 import { resolveDingTalkAccountConfig } from "./accounts.js";
 import {
@@ -168,19 +168,33 @@ export function createDingTalkReplyDispatcher(params: CreateDingTalkReplyDispatc
           }
         }
 
-        // Check render mode: auto (default), raw, or card
+        // Check render mode: auto (default), raw, card, or markdown
         const renderMode = dingtalkCfg?.renderMode ?? "auto";
 
-        // Determine if we should use card for this message
+        // Determine which message type to use
         const useCard =
           renderMode === "card" || (renderMode === "auto" && shouldUseCard(text));
+        const useMarkdown = renderMode === "markdown";
 
         if (useCard) {
-          // Card mode: send as ActionCard with markdown rendering
+          // Card mode: send as ActionCard with markdown rendering (NOT shareable)
           const chunks = core.channel.text.chunkTextWithMode(text, textChunkLimit, chunkMode);
           params.runtime.log?.(`dingtalk deliver: sending ${chunks.length} card chunks to ${conversationId}`);
           for (const chunk of chunks) {
             await sendActionCardDingTalk({
+              cfg,
+              sessionWebhook,
+              title: "Reply",
+              text: chunk,
+              client,
+            });
+          }
+        } else if (useMarkdown) {
+          // Markdown mode: send as markdown message (shareable, limited markdown support)
+          const chunks = core.channel.text.chunkTextWithMode(text, textChunkLimit, chunkMode);
+          params.runtime.log?.(`dingtalk deliver: sending ${chunks.length} markdown chunks to ${conversationId}`);
+          for (const chunk of chunks) {
+            await sendMarkdownDingTalk({
               cfg,
               sessionWebhook,
               title: "Reply",
