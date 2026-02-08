@@ -16,7 +16,7 @@ import {
   removeTypingIndicator,
   type TypingIndicatorState,
 } from "./typing.js";
-import { processLocalImages, getOapiAccessToken } from "./media.js";
+import { processLocalImages, processFileMarkers, getOapiAccessToken } from "./media.js";
 
 /**
  * Detect if text contains markdown elements that benefit from card rendering.
@@ -37,6 +37,8 @@ export type CreateDingTalkReplyDispatcherParams = {
   agentId: string;
   runtime: RuntimeEnv;
   conversationId: string;
+  conversationType: "1" | "2";
+  senderId?: string;
   sessionWebhook: string;
   client?: DWClient;
   accountId?: string;
@@ -126,16 +128,40 @@ export function createDingTalkReplyDispatcher(params: CreateDingTalkReplyDispatc
           cfg.channels?.dingtalk as DingTalkConfig | undefined,
           params.accountId,
         );
+        const log = {
+          info: (msg: string) => params.runtime.log?.(msg),
+          warn: (msg: string) => params.runtime.log?.(msg),
+          error: (msg: string) => params.runtime.error?.(msg),
+        };
+
+        // Process file markers first: upload and send files as separate messages
+        if (dingtalkCfg?.appKey && dingtalkCfg?.appSecret) {
+          try {
+            text = await processFileMarkers(
+              text,
+              {
+                appKey: dingtalkCfg.appKey,
+                appSecret: dingtalkCfg.appSecret,
+                robotCode: dingtalkCfg.robotCode,
+              },
+              {
+                conversationType: params.conversationType,
+                conversationId: params.conversationId,
+                senderId: params.senderId,
+              },
+              log,
+            );
+          } catch (err) {
+            params.runtime.error?.(`dingtalk deliver: file processing failed: ${String(err)}`);
+          }
+        }
+
+        // Process local images
         if (dingtalkCfg && dingtalkCfg.enableMediaUpload !== false) {
           try {
             if (cachedOapiToken === undefined) {
               cachedOapiToken = await getOapiAccessToken(dingtalkCfg, client);
             }
-            const log = {
-              info: (msg: string) => params.runtime.log?.(msg),
-              warn: (msg: string) => params.runtime.log?.(msg),
-              error: (msg: string) => params.runtime.error?.(msg),
-            };
             text = await processLocalImages(text, cachedOapiToken, log);
           } catch (err) {
             params.runtime.error?.(`dingtalk deliver: image processing failed: ${String(err)}`);

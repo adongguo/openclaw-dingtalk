@@ -309,6 +309,8 @@ export async function handleDingTalkMessage(params: {
       agentId: route.agentId,
       runtime: runtime as RuntimeEnv,
       conversationId: ctx.conversationId,
+      conversationType: message.conversationType,
+      senderId: message.senderStaffId,
       sessionWebhook: ctx.sessionWebhook,
       client,
       accountId,
