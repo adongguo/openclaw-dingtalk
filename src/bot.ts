@@ -75,7 +75,7 @@ export async function handleDingTalkMessage(params: {
   // Register peer ID for case-preserving outbound resolution
   registerPeerId(ctx.senderId);
 
-  log(`dingtalk: received message from ${ctx.senderNick} (${ctx.senderId}) in ${ctx.conversationId} (${ctx.chatType})`);
+  log(`dingtalk: received message from ${ctx.senderNick} (${ctx.senderId}) in ${ctx.conversationId} (${ctx.chatType}) [account=${accountId ?? "default"}]`);
 
   const historyLimit = Math.max(
     0,
@@ -324,7 +324,7 @@ export async function handleDingTalkMessage(params: {
       accountId,
     });
 
-    log(`dingtalk: dispatching to agent (session=${route.sessionKey})`);
+    log(`dingtalk: dispatching to agent (session=${route.sessionKey}, account=${accountId ?? "default"})`);
 
     const { queuedFinal, counts } = await core.channel.reply.dispatchReplyFromConfig({
       ctx: ctxPayload,

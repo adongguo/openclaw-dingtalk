@@ -140,7 +140,7 @@ export function createDingTalkReplyDispatcher(params: CreateDingTalkReplyDispatc
           ? initialConversationId
           : (getLatestWebhookForSender(params.senderId ?? "")?.conversationId ?? initialConversationId);
 
-        params.runtime.log?.(`dingtalk deliver called: text=${payload.text?.slice(0, 100)}`);
+        params.runtime.log?.(`dingtalk deliver called: conv=${conversationId} webhook=${sessionWebhook !== initialSessionWebhook ? "RESOLVED_NEW" : "original"} account=${params.accountId ?? "default"} text=${payload.text?.slice(0, 80)}`);
         let text = payload.text ?? "";
         if (!text.trim()) {
           params.runtime.log?.(`dingtalk deliver: empty text, skipping`);
