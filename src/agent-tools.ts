@@ -232,8 +232,10 @@ async function handleMention(
   }
 
   // Resolve sessionWebhook: prefer group-specific cache, fallback to any cached
+  // When groupId is specified, ONLY use that group's cached webhook.
+  // Do NOT fall back to any cached webhook (which may be a DM webhook).
   const sessionWebhook = groupId
-    ? getCachedWebhook(groupId) ?? getCachedWebhook()
+    ? getCachedWebhook(groupId)
     : getCachedWebhook();
 
   // Route 1: Use webhook (supports real @mention with at field)

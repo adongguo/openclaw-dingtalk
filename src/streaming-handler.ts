@@ -247,8 +247,43 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
       const updateInterval = 300; // Min update interval ms
       let chunkCount = 0;
 
+      // Progress heartbeat: show elapsed time when stream is silent (tool execution)
+      const SILENCE_THRESHOLD_MS = 3000; // Show progress after 3s silence
+      const PROGRESS_UPDATE_INTERVAL_MS = 5000; // Update progress every 5s
+      let lastChunkTime = Date.now();
+      let progressTimer: ReturnType<typeof setInterval> | null = null;
+      let isShowingProgress = false;
+      const streamStartTime = Date.now();
+
+      const startProgressHeartbeat = () => {
+        if (progressTimer) return;
+        progressTimer = setInterval(async () => {
+          const silenceMs = Date.now() - lastChunkTime;
+          if (silenceMs >= SILENCE_THRESHOLD_MS) {
+            const elapsedSec = Math.floor((Date.now() - streamStartTime) / 1000);
+            const progressText = accumulated
+              ? `${accumulated}\n\n⏳ *执行中... (${elapsedSec}s)*`
+              : `⏳ *执行中... (${elapsedSec}s)*`;
+            isShowingProgress = true;
+            try {
+              await streamAICard(card, progressText, false, log);
+            } catch (e) {
+              // Non-fatal: progress update is best-effort
+            }
+          }
+        }, PROGRESS_UPDATE_INTERVAL_MS);
+      };
+
+      const stopProgressHeartbeat = () => {
+        if (progressTimer) {
+          clearInterval(progressTimer);
+          progressTimer = null;
+        }
+      };
+
       try {
         log?.info?.(`[DingTalk][Streaming] Starting Gateway stream...`);
+        startProgressHeartbeat();
 
         for await (const chunk of streamFromGateway({
           userContent: content.text,
@@ -261,11 +296,20 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
         })) {
           accumulated += chunk;
           chunkCount++;
+          lastChunkTime = Date.now();
 
           if (chunkCount <= 3) {
             log?.info?.(
               `[DingTalk][Streaming] Chunk #${chunkCount}: "${chunk.slice(0, 50)}..." (total=${accumulated.length})`,
             );
+          }
+
+          // If we were showing progress, restore actual content immediately
+          if (isShowingProgress) {
+            isShowingProgress = false;
+            await streamAICard(card, accumulated, false, log);
+            lastUpdateTime = Date.now();
+            continue;
           }
 
           // Throttle updates
@@ -275,6 +319,8 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
             lastUpdateTime = now;
           }
         }
+
+        stopProgressHeartbeat();
 
         log?.info?.(`[DingTalk][Streaming] Stream complete: ${chunkCount} chunks, ${accumulated.length} chars`);
 
@@ -300,6 +346,7 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
         await finishAICard(card, accumulated, log);
         log?.info?.(`[DingTalk][Streaming] AI Card finished, ${accumulated.length} chars`);
       } catch (err: unknown) {
+        stopProgressHeartbeat();
         const errMsg = err instanceof Error ? err.message : String(err);
         log?.error?.(`[DingTalk][Streaming] Gateway error: ${errMsg}`);
 

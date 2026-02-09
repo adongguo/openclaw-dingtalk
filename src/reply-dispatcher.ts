@@ -120,13 +120,56 @@ export function createDingTalkReplyDispatcher(params: CreateDingTalkReplyDispatc
     channel: "dingtalk",
   });
 
+  // Progress heartbeat: send periodic "executing..." messages during long agent runs
+  const PROGRESS_DELAY_MS = 8000;  // Wait 8s before first progress message
+  const PROGRESS_INTERVAL_MS = 15000; // Then update every 15s
+  let progressTimer: ReturnType<typeof setTimeout> | null = null;
+  let progressIntervalTimer: ReturnType<typeof setInterval> | null = null;
+  const progressStartTime = Date.now();
+
+  const startProgressHeartbeat = () => {
+    // After initial delay, send first progress then start interval
+    progressTimer = setTimeout(async () => {
+      const elapsedSec = Math.floor((Date.now() - progressStartTime) / 1000);
+      try {
+        await sendMessageDingTalk({
+          cfg,
+          sessionWebhook,
+          text: `⏳ 执行中... (${elapsedSec}s)`,
+          client,
+        });
+      } catch { /* best-effort */ }
+
+      progressIntervalTimer = setInterval(async () => {
+        const elapsed = Math.floor((Date.now() - progressStartTime) / 1000);
+        try {
+          await sendMessageDingTalk({
+            cfg,
+            sessionWebhook,
+            text: `⏳ 仍在执行中... (${elapsed}s)`,
+            client,
+          });
+        } catch { /* best-effort */ }
+      }, PROGRESS_INTERVAL_MS);
+    }, PROGRESS_DELAY_MS);
+  };
+
+  const stopProgressHeartbeat = () => {
+    if (progressTimer) { clearTimeout(progressTimer); progressTimer = null; }
+    if (progressIntervalTimer) { clearInterval(progressIntervalTimer); progressIntervalTimer = null; }
+  };
+
   const { dispatcher, replyOptions, markDispatchIdle } =
     core.channel.reply.createReplyDispatcherWithTyping({
       responsePrefix: prefixContext.responsePrefix,
       responsePrefixContextProvider: prefixContext.responsePrefixContextProvider,
       humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
-      onReplyStart: typingCallbacks.onReplyStart,
+      onReplyStart: (...args: Parameters<typeof typingCallbacks.onReplyStart>) => {
+        startProgressHeartbeat();
+        return typingCallbacks.onReplyStart(...args);
+      },
       deliver: async (payload: ReplyPayload) => {
+        stopProgressHeartbeat();
         // Dynamically resolve the latest webhook for this sender/conversation.
         // This handles the case where the same user DMs from different clients
         // (each producing a different conversationId/webhook).
@@ -244,10 +287,14 @@ export function createDingTalkReplyDispatcher(params: CreateDingTalkReplyDispatc
         }
       },
       onError: (err, info) => {
+        stopProgressHeartbeat();
         params.runtime.error?.(`dingtalk ${info.kind} reply failed: ${String(err)}`);
         typingCallbacks.onIdle?.();
       },
-      onIdle: typingCallbacks.onIdle,
+      onIdle: () => {
+        stopProgressHeartbeat();
+        typingCallbacks.onIdle?.();
+      },
     });
 
   return {
