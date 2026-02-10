@@ -163,6 +163,22 @@ async function monitorStream(params: {
   });
 }
 
+/**
+ * Check connection health for a given account.
+ * Returns whether the DingTalk stream client is connected.
+ */
+export function getConnectionHealth(accountId?: string): { connected: boolean; registered: boolean } {
+  const key = accountId ?? "__default__";
+  const client = activeClients.get(key);
+  if (!client) {
+    return { connected: false, registered: false };
+  }
+  return {
+    connected: Boolean(client.connected),
+    registered: Boolean(client.registered),
+  };
+}
+
 export function stopDingTalkMonitor(accountId?: string): void {
   if (accountId) {
     const key = accountId;

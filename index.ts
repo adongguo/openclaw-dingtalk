@@ -116,6 +116,9 @@ export { formatStatusResponse, formatSessionsResponse, formatWhoamiResponse } fr
 // Agent tools
 export { registerDingTalkTools } from "./src/agent-tools.js";
 
+// Lifecycle hooks
+export { registerDingTalkHooks } from "./src/hooks.js";
+
 const plugin = {
   id: "dingtalk",
   name: "DingTalk",
@@ -126,6 +129,7 @@ const plugin = {
     api.registerChannel({ plugin: dingtalkPlugin });
     registerCommands(api);
     registerTools(api);
+    registerHooks(api);
   },
 };
 
@@ -174,5 +178,13 @@ function registerTools(api: ClawdbotPluginApi): void {
     registerDingTalkTools(api);
   }).catch(() => {
     // Agent tools registration is optional; silently skip if module fails to load
+  });
+}
+
+function registerHooks(api: ClawdbotPluginApi): void {
+  import("./src/hooks.js").then(({ registerDingTalkHooks }) => {
+    registerDingTalkHooks(api);
+  }).catch(() => {
+    // Hook registration is optional; silently skip if module fails to load
   });
 }

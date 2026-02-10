@@ -8,6 +8,7 @@ import {
   listDingTalkAccountIds,
   resolveDefaultDingTalkAccountId,
 } from "./accounts.js";
+import { dingtalkMentions } from "./mentions.js";
 import { dingtalkOutbound } from "./outbound.js";
 import { probeDingTalk } from "./probe.js";
 import { resolveDingTalkGroupToolPolicy } from "./policy.js";
@@ -19,6 +20,8 @@ import {
   listDingTalkDirectoryGroupsLive,
 } from "./directory.js";
 import { dingtalkOnboardingAdapter } from "./onboarding.js";
+import { dingtalkMessageActions } from "./actions.js";
+import { dingtalkHeartbeat } from "./heartbeat.js";
 
 const meta = {
   id: "dingtalk",
@@ -234,6 +237,8 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
       },
     }),
   },
+  actions: dingtalkMessageActions,
+  heartbeat: dingtalkHeartbeat,
   onboarding: dingtalkOnboardingAdapter,
   messaging: {
     normalizeTarget: normalizeDingTalkTarget,
@@ -242,6 +247,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
       hint: "<conversationId|user:staffId>",
     },
   },
+  mentions: dingtalkMentions,
   directory: {
     self: async () => null,
     listPeers: async ({ cfg, query, limit }) =>
