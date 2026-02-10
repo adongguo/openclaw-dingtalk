@@ -1,4 +1,4 @@
-import type { ChannelPlugin, ClawdbotConfig } from "openclaw/plugin-sdk";
+import type { ChannelPlugin, ClawdbotConfig, ChannelStreamingAdapter, ChannelThreadingAdapter } from "openclaw/plugin-sdk";
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk";
 import type { ResolvedDingTalkAccount, DingTalkConfig } from "./types.js";
 import {
@@ -235,6 +235,20 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
           enabled: true,
         },
       },
+    }),
+  },
+  streaming: {
+    blockStreamingCoalesceDefaults: {
+      minChars: 800,
+      idleMs: 1500,
+    },
+  },
+  threading: {
+    resolveReplyToMode: () => "off",
+    buildToolContext: ({ context, hasRepliedRef }) => ({
+      currentChannelId: context.To?.trim() || undefined,
+      currentThreadTs: context.ReplyToId,
+      hasRepliedRef,
     }),
   },
   actions: dingtalkMessageActions,

@@ -8,6 +8,7 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import { registerApprovalTools } from "./approval.js";
 import { getGroupMembers, getGroupMemberCount, getTrackedGroupIds } from "./group-members.js";
 import { getCachedWebhook } from "./runtime.js";
 import type { DingTalkConfig } from "./types.js";
@@ -94,6 +95,129 @@ export function registerDingTalkTools(api: ClawdbotPluginApi): void {
     },
   });
 
+  // ---- Attendance tool ----
+  registerTool({
+    name: "dingtalk_attendance",
+    description:
+      "Query DingTalk attendance records. Supports two modes: " +
+      "'records' (punch clock records) and 'results' (attendance results with late/absent status).",
+    parameters: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["records", "results"],
+          description: "Query mode: 'records' for punch records, 'results' for attendance results (default: results)",
+        },
+        userIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "List of user staff IDs to query",
+        },
+        dateFrom: {
+          type: "string",
+          description: "Start date/time in 'yyyy-MM-dd HH:mm:ss' format",
+        },
+        dateTo: {
+          type: "string",
+          description: "End date/time in 'yyyy-MM-dd HH:mm:ss' format",
+        },
+        offset: { type: "number", description: "Pagination offset (results mode only)" },
+        limit: { type: "number", description: "Page size, max 50 (results mode only)" },
+      },
+      required: ["userIds", "dateFrom", "dateTo"],
+    },
+    execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+      try {
+        const result = await handleAttendance(params, dingtalkConfig);
+        return { content: [{ type: "text", text: result }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }] };
+      }
+    },
+  });
+
+  // ---- Calendar tool ----
+  registerTool({
+    name: "dingtalk_calendar",
+    description:
+      "Manage DingTalk calendar events. Actions: 'create' (create event), " +
+      "'list' (list events), 'schedule' (check free/busy).",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["create", "list", "schedule"],
+          description: "Calendar action",
+        },
+        userId: { type: "string", description: "Union ID of the operating user" },
+        summary: { type: "string", description: "Event title (create)" },
+        description: { type: "string", description: "Event description (create)" },
+        startTime: { type: "string", description: "Start time ISO 8601" },
+        endTime: { type: "string", description: "End time ISO 8601" },
+        isAllDay: { type: "boolean", description: "All-day event (create)" },
+        attendees: {
+          type: "array",
+          items: { type: "object", properties: { id: { type: "string" } } },
+          description: "Attendee union IDs (create)",
+        },
+        userIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "User IDs to check schedule (schedule action)",
+        },
+        maxResults: { type: "number", description: "Max results (list)" },
+        nextToken: { type: "string", description: "Pagination token (list)" },
+      },
+      required: ["action", "userId"],
+    },
+    execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+      try {
+        const result = await handleCalendar(params, dingtalkConfig);
+        return { content: [{ type: "text", text: result }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }] };
+      }
+    },
+  });
+
+  // ---- Docs tool ----
+  registerTool({
+    name: "dingtalk_docs",
+    description:
+      "Manage DingTalk documents. Actions: 'create' (create document), 'list' (list documents).",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["create", "list"],
+          description: "Document action",
+        },
+        workspaceId: { type: "string", description: "Workspace ID" },
+        operatorId: { type: "string", description: "Operator union ID" },
+        name: { type: "string", description: "Document name (create)" },
+        docType: { type: "string", description: "Document type, e.g. 'alidoc' (create)" },
+        parentNodeId: { type: "string", description: "Parent node ID" },
+        maxResults: { type: "number", description: "Max results (list)" },
+        nextToken: { type: "string", description: "Pagination token (list)" },
+      },
+      required: ["action", "workspaceId", "operatorId"],
+    },
+    execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+      try {
+        const result = await handleDocs(params, dingtalkConfig);
+        return { content: [{ type: "text", text: result }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }] };
+      }
+    },
+  });
+
   registerTool({
     name: "dingtalk_mention",
     description:
@@ -134,6 +258,9 @@ export function registerDingTalkTools(api: ClawdbotPluginApi): void {
       }
     },
   });
+
+  // Register approval tools
+  registerApprovalTools(api);
 }
 
 // ============ Private Functions ============
@@ -290,4 +417,139 @@ async function handleMention(
     const msg = error instanceof Error ? error.message : String(error);
     return `Failed to send message: ${msg}`;
   }
+}
+
+async function handleAttendance(
+  params: Record<string, unknown>,
+  dingtalkConfig?: DingTalkConfig,
+): Promise<string> {
+  if (!dingtalkConfig) return "Error: DingTalk config not available.";
+
+  const { getAttendanceRecords, getAttendanceResults } = await import("./attendance.js");
+  const userIds = params.userIds as string[];
+  const dateFrom = params.dateFrom as string;
+  const dateTo = params.dateTo as string;
+  const mode = (params.mode as string) ?? "results";
+
+  if (!userIds?.length || !dateFrom || !dateTo) {
+    return "Error: userIds, dateFrom, and dateTo are required.";
+  }
+
+  if (mode === "records") {
+    const records = await getAttendanceRecords(dingtalkConfig, {
+      userIds,
+      checkDateFrom: dateFrom,
+      checkDateTo: dateTo,
+    });
+    return JSON.stringify({ mode: "records", count: records.length, records }, null, 2);
+  }
+
+  const result = await getAttendanceResults(dingtalkConfig, {
+    workDateFrom: dateFrom,
+    workDateTo: dateTo,
+    userIdList: userIds,
+    offset: params.offset as number | undefined,
+    limit: params.limit as number | undefined,
+  });
+  return JSON.stringify({ mode: "results", count: result.records.length, hasMore: result.hasMore, records: result.records }, null, 2);
+}
+
+async function handleCalendar(
+  params: Record<string, unknown>,
+  dingtalkConfig?: DingTalkConfig,
+): Promise<string> {
+  if (!dingtalkConfig) return "Error: DingTalk config not available.";
+
+  const { createCalendarEvent, listCalendarEvents, getSchedule } = await import("./calendar.js");
+  const action = params.action as string;
+  const userId = params.userId as string;
+
+  if (!userId) return "Error: userId is required.";
+
+  if (action === "create") {
+    const summary = params.summary as string;
+    if (!summary) return "Error: summary is required for create.";
+
+    const event = await createCalendarEvent(dingtalkConfig, {
+      userId,
+      summary,
+      description: params.description as string | undefined,
+      isAllDay: params.isAllDay as boolean | undefined,
+      start: params.isAllDay
+        ? { date: (params.startTime as string)?.slice(0, 10) }
+        : { dateTime: params.startTime as string },
+      end: params.isAllDay
+        ? { date: (params.endTime as string)?.slice(0, 10) }
+        : { dateTime: params.endTime as string },
+      attendees: params.attendees as Array<{ id?: string }> | undefined,
+    });
+    return JSON.stringify({ action: "created", event }, null, 2);
+  }
+
+  if (action === "list") {
+    const result = await listCalendarEvents(dingtalkConfig, {
+      userId,
+      timeMin: params.startTime as string | undefined,
+      timeMax: params.endTime as string | undefined,
+      maxResults: params.maxResults as number | undefined,
+      nextToken: params.nextToken as string | undefined,
+    });
+    return JSON.stringify({ action: "list", count: result.events.length, ...result }, null, 2);
+  }
+
+  if (action === "schedule") {
+    const userIds = params.userIds as string[];
+    if (!userIds?.length) return "Error: userIds is required for schedule.";
+
+    const schedules = await getSchedule(dingtalkConfig, {
+      userId,
+      userIds,
+      startTime: params.startTime as string,
+      endTime: params.endTime as string,
+    });
+    return JSON.stringify({ action: "schedule", schedules }, null, 2);
+  }
+
+  return `Error: unknown action '${action}'. Use 'create', 'list', or 'schedule'.`;
+}
+
+async function handleDocs(
+  params: Record<string, unknown>,
+  dingtalkConfig?: DingTalkConfig,
+): Promise<string> {
+  if (!dingtalkConfig) return "Error: DingTalk config not available.";
+
+  const { createDocument, listDocuments } = await import("./docs.js");
+  const action = params.action as string;
+  const workspaceId = params.workspaceId as string;
+  const operatorId = params.operatorId as string;
+
+  if (!workspaceId || !operatorId) return "Error: workspaceId and operatorId are required.";
+
+  if (action === "create") {
+    const name = params.name as string;
+    if (!name) return "Error: name is required for create.";
+
+    const doc = await createDocument(dingtalkConfig, {
+      workspaceId,
+      operatorId,
+      name,
+      docType: params.docType as string | undefined,
+      parentNodeId: params.parentNodeId as string | undefined,
+    });
+    return JSON.stringify({ action: "created", doc }, null, 2);
+  }
+
+  if (action === "list") {
+    const result = await listDocuments(dingtalkConfig, {
+      workspaceId,
+      operatorId,
+      maxResults: params.maxResults as number | undefined,
+      nextToken: params.nextToken as string | undefined,
+      parentNodeId: params.parentNodeId as string | undefined,
+    });
+    return JSON.stringify({ action: "list", count: result.nodes.length, ...result }, null, 2);
+  }
+
+  return `Error: unknown action '${action}'. Use 'create' or 'list'.`;
 }
