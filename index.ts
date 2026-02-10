@@ -130,6 +130,9 @@ const plugin = {
     registerCommands(api);
     registerTools(api);
     registerHooks(api);
+    registerHttpRoutes(api);
+    registerServices(api);
+    registerCliCommands(api);
   },
 };
 
@@ -187,4 +190,45 @@ function registerHooks(api: ClawdbotPluginApi): void {
   }).catch(() => {
     // Hook registration is optional; silently skip if module fails to load
   });
+}
+
+function registerHttpRoutes(api: ClawdbotPluginApi): void {
+  import("./src/http-routes.js").then(({ registerDingTalkHttpRoutes }) => {
+    const dingtalkCfg = (api.config?.channels as Record<string, unknown> | undefined)?.dingtalk as
+      | Record<string, unknown>
+      | undefined;
+    registerDingTalkHttpRoutes({
+      registerHttpRoute: (params) => api.registerHttpRoute(params),
+      appSecret: dingtalkCfg?.appSecret as string | undefined,
+      log: api.logger,
+    });
+  }).catch(() => {
+    // HTTP route registration is optional
+  });
+}
+
+function registerServices(api: ClawdbotPluginApi): void {
+  import("./src/services.js").then(({ createDingTalkSessionCleanupService }) => {
+    const service = createDingTalkSessionCleanupService();
+    api.registerService({
+      id: service.id,
+      start: (ctx) => service.start({ logger: ctx.logger }),
+      stop: () => service.stop?.(),
+    });
+  }).catch(() => {
+    // Service registration is optional
+  });
+}
+
+function registerCliCommands(api: ClawdbotPluginApi): void {
+  api.registerCli(
+    ({ program, config, logger }) => {
+      import("./src/cli.js").then(({ registerDingTalkCli }) => {
+        registerDingTalkCli({ program, config: config as Record<string, unknown>, logger });
+      }).catch(() => {
+        // CLI registration is optional
+      });
+    },
+    { commands: ["dingtalk"] },
+  );
 }

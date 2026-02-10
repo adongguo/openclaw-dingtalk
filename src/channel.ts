@@ -248,6 +248,48 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
     },
   },
   mentions: dingtalkMentions,
+  resolver: {
+    resolveTargets: async ({ cfg, inputs, kind }) => {
+      if (kind === "group") {
+        const groups = await listDingTalkDirectoryGroups({ cfg, query: undefined, limit: 1000 });
+        return inputs.map((input) => {
+          const normalized = normalizeDingTalkTarget(input);
+          const match = groups.find(
+            (g) =>
+              g.id === normalized ||
+              g.id === input ||
+              (g.name && g.name.toLowerCase() === input.toLowerCase()),
+          );
+          if (match) {
+            return { input, resolved: true, id: match.id, name: match.name };
+          }
+          // If it looks like a DingTalk ID, accept it as-is
+          if (looksLikeDingTalkId(input)) {
+            return { input, resolved: true, id: normalized ?? input };
+          }
+          return { input, resolved: false, note: "group not found" };
+        });
+      }
+      // kind === "user"
+      const peers = await listDingTalkDirectoryPeers({ cfg, query: undefined, limit: 1000 });
+      return inputs.map((input) => {
+        const normalized = normalizeDingTalkTarget(input);
+        const match = peers.find(
+          (p) =>
+            p.id === normalized ||
+            p.id === input ||
+            (p.name && p.name.toLowerCase() === input.toLowerCase()),
+        );
+        if (match) {
+          return { input, resolved: true, id: match.id, name: match.name };
+        }
+        if (looksLikeDingTalkId(input)) {
+          return { input, resolved: true, id: normalized ?? input };
+        }
+        return { input, resolved: false, note: "user not found" };
+      });
+    },
+  },
   directory: {
     self: async () => null,
     listPeers: async ({ cfg, query, limit }) =>
