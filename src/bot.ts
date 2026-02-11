@@ -75,6 +75,10 @@ export async function handleDingTalkMessage(params: {
   // Register peer ID for case-preserving outbound resolution
   registerPeerId(ctx.senderId);
 
+  // Track which account owns this conversation for outbound routing
+  const { trackConversationAccount } = await import("./runtime.js");
+  trackConversationAccount(ctx.conversationId, accountId ?? "default");
+
   log(`dingtalk: received message from ${ctx.senderNick} (${ctx.senderId}) in ${ctx.conversationId} (${ctx.chatType}) [account=${accountId ?? "default"}]`);
 
   const historyLimit = Math.max(

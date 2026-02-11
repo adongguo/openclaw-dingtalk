@@ -12,6 +12,7 @@ import { registerApprovalTools } from "./approval.js";
 import { getGroupMembers, getGroupMemberCount, getTrackedGroupIds } from "./group-members.js";
 import { getCachedWebhook } from "./runtime.js";
 import type { DingTalkConfig } from "./types.js";
+import { resolveDingTalkAccountConfig } from "./accounts.js";
 
 // ============ Public Functions ============
 
@@ -244,12 +245,20 @@ export function registerDingTalkTools(api: ClawdbotPluginApi): void {
           type: "string",
           description: "Target group conversationId (e.g. cidXXX). When provided, sends via OpenAPI to that group.",
         },
+        accountId: {
+          type: "string",
+          description: "Bot account ID (e.g. 'default', 'bot2'). Use when targeting a group belonging to a specific bot/enterprise.",
+        },
       },
       required: ["text"],
     },
     execute: async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
-        const result = await handleMention(params, dingtalkConfig);
+        const accountId = params.accountId as string | undefined;
+        const resolvedConfig = accountId
+          ? resolveDingTalkAccountConfig(dingtalkConfig, accountId)
+          : dingtalkConfig;
+        const result = await handleMention(params, resolvedConfig);
         return { content: [{ type: "text", text: result }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

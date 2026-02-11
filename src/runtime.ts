@@ -28,6 +28,21 @@ interface WebhookEntry {
 const webhookByConversation = new Map<string, WebhookEntry>();
 const webhookBySender = new Map<string, WebhookEntry>();
 
+// ── Conversation → AccountId Mapping ──
+// Tracks which bot account owns each conversationId (group or DM).
+// Populated on incoming messages.
+const conversationAccountMap = new Map<string, string>();
+
+/** Record that a conversationId belongs to a specific accountId. */
+export function trackConversationAccount(conversationId: string, accountId: string): void {
+  conversationAccountMap.set(conversationId, accountId);
+}
+
+/** Look up which accountId owns a conversationId. */
+export function getConversationAccountId(conversationId: string): string | undefined {
+  return conversationAccountMap.get(conversationId);
+}
+
 /** Cache a sessionWebhook (called from bot.ts on each incoming message). */
 export function cacheSessionWebhook(
   conversationId: string,

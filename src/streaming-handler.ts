@@ -129,6 +129,10 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
       ? `${acctPrefix}${data.conversationId}:${senderId}`
       : `${acctPrefix}${data.conversationId}`;
 
+  // Track which account owns this conversation for outbound routing
+  const { trackConversationAccount } = await import("./runtime.js");
+  trackConversationAccount(data.conversationId, accountId ?? "default");
+
   log?.info?.(`[DingTalk][Streaming] Message from ${senderName}: "${content.text.slice(0, 50)}..."`);
 
   // Check for commands before dispatching to agent

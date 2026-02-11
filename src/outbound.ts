@@ -1,6 +1,6 @@
 import type { ChannelOutboundAdapter, ClawdbotConfig } from "openclaw/plugin-sdk";
 import type { DingTalkConfig } from "./types.js";
-import { getDingTalkRuntime } from "./runtime.js";
+import { getDingTalkRuntime, getConversationAccountId } from "./runtime.js";
 import { resolveDingTalkAccountConfig } from "./accounts.js";
 import { sendMessageDingTalk } from "./send.js";
 import { sendMediaDingTalk } from "./media.js";
@@ -32,7 +32,7 @@ export const dingtalkOutbound: ChannelOutboundAdapter = {
       return { channel: "dingtalk", conversationId: result.conversationId, messageId: result.processQueryKey || "" };
     }
 
-    const resolvedCfg = resolveFirstConfiguredAccount(cfg);
+    const resolvedCfg = resolveConfigForTarget(cfg, target.id);
     if (!resolvedCfg) {
       throw new Error("[dingtalk] appKey/appSecret required for proactive send");
     }
@@ -65,7 +65,7 @@ export const dingtalkOutbound: ChannelOutboundAdapter = {
       return { channel: "dingtalk", conversationId: result.conversationId, messageId: result.processQueryKey || "" };
     }
 
-    const resolvedCfg = resolveFirstConfiguredAccount(cfg);
+    const resolvedCfg = resolveConfigForTarget(cfg, target.id);
     if (!resolvedCfg) {
       throw new Error("[dingtalk] appKey/appSecret required for proactive send");
     }
@@ -99,14 +99,26 @@ export const dingtalkOutbound: ChannelOutboundAdapter = {
 // ============ Private Helpers ============
 
 /**
- * Resolve the first account with valid credentials for proactive sends.
- * Checks multi-account `accounts` map first, then falls back to root-level credentials.
+ * Resolve the correct account config for proactive sends.
+ * If a conversationId is provided, checks the conversation→account mapping first.
+ * Falls back to first configured account.
  */
-function resolveFirstConfiguredAccount(cfg: ClawdbotConfig): DingTalkConfig | null {
+function resolveConfigForTarget(cfg: ClawdbotConfig, conversationId?: string): DingTalkConfig | null {
   const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
   if (!dingtalkCfg) return null;
 
-  // Check accounts map first
+  // Priority 1: Use conversation→account mapping if available
+  if (conversationId) {
+    const accountId = getConversationAccountId(conversationId);
+    if (accountId) {
+      const resolved = resolveDingTalkAccountConfig(dingtalkCfg, accountId);
+      if (resolved?.appKey && resolved?.appSecret) {
+        return resolved;
+      }
+    }
+  }
+
+  // Priority 2: First configured account
   if (dingtalkCfg.accounts) {
     for (const accountId of Object.keys(dingtalkCfg.accounts)) {
       const resolved = resolveDingTalkAccountConfig(dingtalkCfg, accountId);
