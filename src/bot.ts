@@ -155,9 +155,13 @@ export async function handleDingTalkMessage(params: {
     config: accountCfg,
     senderId: ctx.senderId,
     senderName: ctx.senderNick ?? ctx.senderId,
-    sessionIdentifier: isGroup
-      ? (accountCfg?.groupSessionScope === "per-user" ? `${ctx.conversationId}:${ctx.senderId}` : ctx.conversationId)
-      : ctx.senderId,
+    sessionIdentifier: (() => {
+      // Prefix accountId for enterprise-level isolation
+      const acctPrefix = accountId ? `${accountId}:` : "";
+      return isGroup
+        ? (accountCfg?.groupSessionScope === "per-user" ? `${acctPrefix}${ctx.conversationId}:${ctx.senderId}` : `${acctPrefix}${ctx.conversationId}`)
+        : `${acctPrefix}${ctx.senderId}`;
+    })(),
     sessionTimeout: accountCfg?.sessionTimeout,
     log: { info: log, warn: log, error },
   });

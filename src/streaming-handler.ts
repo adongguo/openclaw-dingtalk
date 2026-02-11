@@ -121,11 +121,13 @@ export async function handleDingTalkStreamingMessage(params: StreamingHandlerPar
 
   // Apply groupSessionScope for consistent isolation with bot.ts path
   const groupSessionScope = config.groupSessionScope ?? "per-group";
+  // Prefix accountId for enterprise-level isolation
+  const acctPrefix = accountId ? `${accountId}:` : "";
   const sessionIdentifier = isDirect
-    ? senderId
+    ? `${acctPrefix}${senderId}`
     : groupSessionScope === "per-user"
-      ? `${data.conversationId}:${senderId}`
-      : data.conversationId;
+      ? `${acctPrefix}${data.conversationId}:${senderId}`
+      : `${acctPrefix}${data.conversationId}`;
 
   log?.info?.(`[DingTalk][Streaming] Message from ${senderName}: "${content.text.slice(0, 50)}..."`);
 
