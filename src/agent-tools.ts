@@ -379,8 +379,13 @@ async function handleMention(
     // Webhook is available — use it for real @mention support
   } else if (groupId && dingtalkConfig) {
     // Route 2: Fallback to OpenAPI (no real @mention, just text)
+    // First try the resolved config (may be account-specific via accountId param)
+    const { sendViaOpenAPI } = await import("./openapi-send.js");
+    const { getConversationAccountId, trackConversationAccount } = await import("./runtime.js");
+    const { resolveDingTalkAccountConfig: resolveAcct, listDingTalkAccountIds } = await import("./accounts.js");
+
+    // Try mapped/specified account first
     try {
-      const { sendViaOpenAPI } = await import("./openapi-send.js");
       await sendViaOpenAPI({
         config: dingtalkConfig,
         target: { kind: "group", id: groupId },
@@ -390,9 +395,29 @@ async function handleMention(
 
       const mentionInfo = atAll ? "@所有人(文本)" : userIds?.length ? `@${userIds.join(", @")}(文本)` : "无@";
       return `Message sent to group via OpenAPI. Note: ${mentionInfo} — OpenAPI不支持真实@，需要先在群里发消息给机器人以缓存webhook。`;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      return `Failed to send to group: ${msg}`;
+    } catch {
+      // Try all accounts as fallback
+      const topCfg = dingtalkConfig;
+      const accountIds = topCfg.accounts ? Object.keys(topCfg.accounts) : [];
+      for (const acctId of accountIds) {
+        const acctCfg = resolveAcct(topCfg, acctId);
+        if (!acctCfg?.appKey || !acctCfg?.appSecret) continue;
+        try {
+          await sendViaOpenAPI({
+            config: acctCfg,
+            target: { kind: "group", id: groupId },
+            msgKey: "sampleText",
+            msgParam: { content },
+          });
+          // Success — persist mapping
+          trackConversationAccount(groupId, acctId);
+          const mentionInfo = atAll ? "@所有人(文本)" : userIds?.length ? `@${userIds.join(", @")}(文本)` : "无@";
+          return `Message sent to group via OpenAPI (account: ${acctId}). Note: ${mentionInfo}`;
+        } catch {
+          continue;
+        }
+      }
+      return `Failed to send to group: no account has access to this group.`;
     }
   } else {
     return "Error: no cached sessionWebhook and no groupId specified. Either send a message in the target group first, or provide groupId.";

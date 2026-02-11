@@ -1,7 +1,7 @@
 import type { ChannelOutboundAdapter, ClawdbotConfig } from "openclaw/plugin-sdk";
 import type { DingTalkConfig } from "./types.js";
-import { getDingTalkRuntime, getConversationAccountId } from "./runtime.js";
-import { resolveDingTalkAccountConfig } from "./accounts.js";
+import { getDingTalkRuntime, getConversationAccountId, trackConversationAccount } from "./runtime.js";
+import { resolveDingTalkAccountConfig, listDingTalkAccountIds } from "./accounts.js";
 import { sendMessageDingTalk } from "./send.js";
 import { sendMediaDingTalk } from "./media.js";
 import {
@@ -32,14 +32,30 @@ export const dingtalkOutbound: ChannelOutboundAdapter = {
       return { channel: "dingtalk", conversationId: result.conversationId, messageId: result.processQueryKey || "" };
     }
 
-    const resolvedCfg = resolveConfigForTarget(cfg, target.id);
-    if (!resolvedCfg) {
-      throw new Error("[dingtalk] appKey/appSecret required for proactive send");
+    let resolvedCfg = resolveConfigForTarget(cfg, target.id);
+    const openAPITarget: OpenAPISendTarget = { kind: target.kind, id: target.id };
+
+    if (resolvedCfg) {
+      try {
+        const result = await sendTextViaOpenAPI({ config: resolvedCfg, target: openAPITarget, content: text });
+        return { channel: "dingtalk", conversationId: "", messageId: result.processQueryKey };
+      } catch {
+        // Mapped account failed — fall through to try all accounts
+      }
     }
 
-    const openAPITarget: OpenAPISendTarget = { kind: target.kind, id: target.id };
-    const result = await sendTextViaOpenAPI({ config: resolvedCfg, target: openAPITarget, content: text });
-    return { channel: "dingtalk", conversationId: "", messageId: result.processQueryKey };
+    // Fallback: try all accounts (auto-discover correct one)
+    if (target.kind === "group") {
+      let sendResult: { processQueryKey: string } | undefined;
+      const successCfg = await trySendWithAllAccounts(cfg, target.id, async (config) => {
+        sendResult = await sendTextViaOpenAPI({ config, target: openAPITarget, content: text });
+      });
+      if (successCfg && sendResult) {
+        return { channel: "dingtalk", conversationId: "", messageId: sendResult.processQueryKey };
+      }
+    }
+
+    throw new Error("[dingtalk] Failed to send: no account has access to this target");
   },
   sendMedia: async ({ cfg, to, text, mediaUrl }) => {
     const target = parseOutboundTarget(to);
@@ -65,9 +81,18 @@ export const dingtalkOutbound: ChannelOutboundAdapter = {
       return { channel: "dingtalk", conversationId: result.conversationId, messageId: result.processQueryKey || "" };
     }
 
-    const resolvedCfg = resolveConfigForTarget(cfg, target.id);
+    let resolvedCfg = resolveConfigForTarget(cfg, target.id);
     if (!resolvedCfg) {
-      throw new Error("[dingtalk] appKey/appSecret required for proactive send");
+      // Try all accounts for groups
+      if (target.kind === "group") {
+        resolvedCfg = await trySendWithAllAccounts(cfg, target.id, async (config) => {
+          // Probe with a no-op — just verify we can get a token for this account
+          await sendTextViaOpenAPI({ config, target: { kind: target.kind, id: target.id }, content: text ?? "test" });
+        });
+      }
+      if (!resolvedCfg) {
+        throw new Error("[dingtalk] appKey/appSecret required for proactive send");
+      }
     }
 
     const openAPITarget: OpenAPISendTarget = { kind: target.kind, id: target.id };
@@ -100,7 +125,7 @@ export const dingtalkOutbound: ChannelOutboundAdapter = {
 
 /**
  * Resolve the correct account config for proactive sends.
- * If a conversationId is provided, checks the conversation→account mapping first.
+ * If a conversationId is provided, checks the persistent conversation→account mapping first.
  * Falls back to first configured account.
  */
 function resolveConfigForTarget(cfg: ClawdbotConfig, conversationId?: string): DingTalkConfig | null {
@@ -133,6 +158,36 @@ function resolveConfigForTarget(cfg: ClawdbotConfig, conversationId?: string): D
     return dingtalkCfg;
   }
 
+  return null;
+}
+
+/**
+ * Try sending to a group by attempting each account until one succeeds.
+ * On success, persists the conversationId→accountId mapping for future use.
+ * Returns the successful account's config, or null if all failed.
+ */
+async function trySendWithAllAccounts(
+  cfg: ClawdbotConfig,
+  conversationId: string,
+  sendFn: (config: DingTalkConfig) => Promise<void>,
+): Promise<DingTalkConfig | null> {
+  const dingtalkCfg = cfg.channels?.dingtalk as DingTalkConfig | undefined;
+  if (!dingtalkCfg) return null;
+
+  const accountIds = listDingTalkAccountIds(cfg);
+  for (const accountId of accountIds) {
+    const resolved = resolveDingTalkAccountConfig(dingtalkCfg, accountId);
+    if (!resolved?.appKey || !resolved?.appSecret) continue;
+    try {
+      await sendFn(resolved);
+      // Success! Persist the mapping
+      trackConversationAccount(conversationId, accountId);
+      return resolved;
+    } catch {
+      // This account can't send to this group, try next
+      continue;
+    }
+  }
   return null;
 }
 

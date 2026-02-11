@@ -28,18 +28,63 @@ interface WebhookEntry {
 const webhookByConversation = new Map<string, WebhookEntry>();
 const webhookBySender = new Map<string, WebhookEntry>();
 
-// ── Conversation → AccountId Mapping ──
-// Tracks which bot account owns each conversationId (group or DM).
-// Populated on incoming messages.
+// ── Conversation → AccountId Mapping (Persistent) ──
+// Tracks which bot account owns each conversationId.
+// Persisted to disk so mappings survive restarts.
+
+import fs from "fs";
+import path from "path";
+
+const MAPPING_FILE = path.join(
+  process.env.HOME ?? "/root",
+  ".openclaw",
+  "dingtalk-conversation-accounts.json",
+);
+
 const conversationAccountMap = new Map<string, string>();
+let mappingLoaded = false;
+
+function loadMappingFromDisk(): void {
+  if (mappingLoaded) return;
+  mappingLoaded = true;
+  try {
+    const data = fs.readFileSync(MAPPING_FILE, "utf-8");
+    const obj = JSON.parse(data) as Record<string, string>;
+    for (const [k, v] of Object.entries(obj)) {
+      conversationAccountMap.set(k, v);
+    }
+  } catch {
+    // File doesn't exist yet or is invalid — start fresh
+  }
+}
+
+function saveMappingToDisk(): void {
+  try {
+    const obj: Record<string, string> = {};
+    for (const [k, v] of conversationAccountMap) {
+      obj[k] = v;
+    }
+    const dir = path.dirname(MAPPING_FILE);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(MAPPING_FILE, JSON.stringify(obj, null, 2));
+  } catch {
+    // Best-effort persistence
+  }
+}
 
 /** Record that a conversationId belongs to a specific accountId. */
 export function trackConversationAccount(conversationId: string, accountId: string): void {
-  conversationAccountMap.set(conversationId, accountId);
+  loadMappingFromDisk();
+  const existing = conversationAccountMap.get(conversationId);
+  if (existing !== accountId) {
+    conversationAccountMap.set(conversationId, accountId);
+    saveMappingToDisk();
+  }
 }
 
 /** Look up which accountId owns a conversationId. */
 export function getConversationAccountId(conversationId: string): string | undefined {
+  loadMappingFromDisk();
   return conversationAccountMap.get(conversationId);
 }
 
