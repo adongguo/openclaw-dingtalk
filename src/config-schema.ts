@@ -74,7 +74,7 @@ const GroupSessionScopeSchema = z.enum(["per-group", "per-user"]).optional();
 // Message templates for standardized DingTalk-optimized rendering
 export const DingTalkTemplatesSchema = z
   .object({
-    thinking: z.object({ text: z.string().optional(), enabled: z.boolean().optional() }).strict().optional(),
+    thinking: z.object({ text: z.string().optional(), texts: z.array(z.string()).optional(), enabled: z.boolean().optional() }).strict().optional(),
     accessDenied: z.object({ text: z.string().optional() }).strict().optional(),
     groupAccessDenied: z.object({ text: z.string().optional() }).strict().optional(),
     newSession: z.object({ text: z.string().optional() }).strict().optional(),

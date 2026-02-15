@@ -17,8 +17,29 @@ export type TemplateResult = {
 
 // ============ Template Functions ============
 
+const DEFAULT_THINKING_TEXTS = [
+  "🤔 思考中...",
+  "🧠 让我想想...",
+  "⚡ 正在处理...",
+  "🔍 分析中...",
+  "💭 组织思路中...",
+  "🎯 正在思考...",
+  "✨ 灵感涌现中...",
+  "🛠️ 处理中...",
+  "📝 整理中...",
+  "🌀 运转中...",
+];
+
 export function thinkingTemplate(templates?: DingTalkTemplates): TemplateResult {
-  const text = templates?.thinking?.text ?? "🤔 思考中...";
+  const texts = templates?.thinking?.texts;
+  if (texts && texts.length > 0) {
+    const text = texts[Math.floor(Math.random() * texts.length)];
+    return { text, useCard: false };
+  }
+  if (templates?.thinking?.text) {
+    return { text: templates.thinking.text, useCard: false };
+  }
+  const text = DEFAULT_THINKING_TEXTS[Math.floor(Math.random() * DEFAULT_THINKING_TEXTS.length)];
   return { text, useCard: false };
 }
 
