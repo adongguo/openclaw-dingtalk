@@ -282,17 +282,21 @@ export async function processFileMarkers(
  * - ![alt](/tmp/xxx.jpg)
  * - ![alt](/var/folders/xxx.jpg)
  * - ![alt](/Users/xxx/photo.jpg)
+ * - ![alt](/root/xxx/photo.jpg)
+ * - ![alt](/home/user/photo.jpg)
  */
-const LOCAL_IMAGE_RE = /!\[([^\]]*)\]\(((?:file:\/\/\/|MEDIA:|attachment:\/\/\/)[^\s)]+|\/(?:tmp|var|private|Users)[^\s)]+)\)/g;
+const LOCAL_IMAGE_RE = /!\[([^\]]*)\]\(((?:file:\/\/\/|MEDIA:|attachment:\/\/\/)[^\s)]+|\/(?:tmp|var|private|Users|root|home)[^\s)]+)\)/g;
 
 /**
  * Regex to match bare local image paths (not in markdown syntax):
  * - `/var/folders/.../screenshot.png`
  * - `/tmp/image.jpg`
  * - `/Users/xxx/photo.png`
+ * - `/root/.openclaw/workspace/avatar.png`
+ * - `/home/user/photo.png`
  * Supports backtick wrapping: `path`
  */
-const BARE_IMAGE_PATH_RE = /`?(\/(?:tmp|var|private|Users)\/[^\s`'",)]+\.(?:png|jpg|jpeg|gif|bmp|webp))`?/gi;
+const BARE_IMAGE_PATH_RE = /`?(\/(?:tmp|var|private|Users|root|home)\/[^\s`'",)]+\.(?:png|jpg|jpeg|gif|bmp|webp))`?/gi;
 
 interface Logger {
   info?: (msg: string) => void;
